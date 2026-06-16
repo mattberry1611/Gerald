@@ -1,0 +1,43 @@
+COMMUTECODER HOME SCREEN PROTOTYPE — APPROVED
+=============================================
+Date: 2026-06-15
+Reviewed by: Claude Code (autonomous task)
+
+APPROVAL STATUS: APPROVED
+
+REVIEW SUMMARY
+--------------
+Both the plan and layout were reviewed and passed all checks.
+
+Plan review (home_screen_plan.txt):
+  [PASS] Five UI sections defined: status bar, voice input, project panel,
+         output panel, activity log
+  [PASS] Voice-first design principles stated
+  [PASS] Dark theme and touch-target sizing specified
+  [PASS] Tech stack aligns with existing gerald_bridge.py / Web Speech API
+  [PASS] Data flow matches CommuteCoder approval model
+
+Layout review (home_screen_layout.txt):
+  [PASS] Full HTML element tree provided for all five sections
+  [PASS] Copy and label text defined for every UI state
+  [PASS] Colour token set complete (14 tokens, dark theme)
+  [PASS] CSS Grid layout dimensions specified
+  [PASS] Mic button CSS state classes defined (idle / listening / processing)
+  [PASS] JavaScript behaviour notes cover all interactive flows
+  [PASS] Approve & Discard actions wired to correct Gerald endpoints
+  [PASS] Spacebar shortcut documented
+
+APPROVED FILES
+--------------
+  home_screen_plan.txt          — layout plan (5 sections, design principles)
+  home_screen_plan_approved.txt — plan approval marker
+  home_screen_layout.txt        — element tree, copy, tokens, JS notes
+  home_screen_prototype_approved.txt — this file (final approval)
+
+NEXT STEPS (for implementation, when ready)
+-------------------------------------------
+1. Build index.html using the element tree from home_screen_layout.txt
+2. Add inline <style> block using the colour tokens and grid dimensions
+3. Wire Web Speech API to #btn-mic (existing code in gerald_bridge.py serves /)
+4. Test Approve → /send-to-claude-code flow end-to-end
+5. Verify on mobile viewport (commute use case: one-handed, high-contrast)

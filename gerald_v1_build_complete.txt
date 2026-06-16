@@ -1,0 +1,140 @@
+GERALD APP V1 — BUILD COMPLETE
+================================
+Date: 2026-06-15
+Builder: Claude Code (automated build from approved plan)
+
+
+FILES CREATED
+─────────────────────────────────────────────────────────────────
+
+gerald-app/                       React Native (Expo SDK 51) project root
+gerald-app/package.json           All dependencies declared
+gerald-app/app.json               Expo config: name=Gerald, package=com.matt.gerald, Android API 26+
+gerald-app/eas.json               EAS Build profiles: development, preview (APK), production (APK)
+gerald-app/tsconfig.json          TypeScript config (extends expo/tsconfig.base, strict mode)
+gerald-app/babel.config.js        Babel preset-expo
+
+gerald-app/constants/theme.ts     Full colour token set (14 tokens: bg, surface, bubbles, accent,
+                                  status colours, code bg, error)
+
+gerald-app/store/conversationStore.ts
+                                  Zustand store: messages[], status, project, baseUrl,
+                                  showTextInput — all with AsyncStorage persistence for
+                                  project + baseUrl
+
+gerald-app/services/geraldApi.ts  Axios wrapper for all Gerald backend calls:
+                                  POST /ask, GET /status, GET /projects,
+                                  POST /send-to-claude-code, POST /reject,
+                                  POST /register-device
+
+gerald-app/services/voice.ts      @react-native-voice/voice wrapper:
+                                  initVoice(), startListening(), stopListening(),
+                                  destroyVoice(), isVoiceAvailable()
+
+gerald-app/services/notifications.ts
+                                  expo-notifications FCM wrapper:
+                                  requestPermissionsAndRegister(), notification
+                                  event listener helpers, Android channel setup
+
+gerald-app/components/MessageBubble.tsx
+                                  Chat bubble: user (right, dark blue) / Gerald (left,
+                                  dark green), code block rendering in monospace,
+                                  long-press timestamp reveal
+
+gerald-app/components/PushToTalkButton.tsx
+                                  Circular PTT button with Animated pulse ring (recording),
+                                  spinner (processing), three visual states
+
+gerald-app/components/TextInputBar.tsx
+                                  Multiline text input (max 4 lines), send button visible
+                                  when text present, dismisses keyboard on send
+
+gerald-app/components/ProjectSelectorModal.tsx
+                                  Bottom-sheet modal, fetches GET /projects, tap to select,
+                                  checkmark on current, persists via AsyncStorage
+
+gerald-app/components/StatusIndicator.tsx
+                                  Coloured status dot (idle/planning/awaiting/executing/error),
+                                  long-press to show label
+
+gerald-app/components/ApproveRejectBar.tsx
+                                  APPROVE (green) / REJECT (red) buttons that call
+                                  POST /send-to-claude-code and POST /reject
+
+gerald-app/app/_layout.tsx        Root Expo Router layout: PaperProvider (dark MD3 theme),
+                                  SafeAreaProvider, FCM init on mount, Stack nav
+
+gerald-app/app/index.tsx          Conversation screen (main):
+                                  - FlatList of MessageBubble components
+                                  - Header: Gerald title + project selector + status dot + settings icon
+                                  - PTT with haptic feedback + voice recognition
+                                  - Text input toggle
+                                  - 3-second status polling loop
+                                  - Stale-closure-safe sendPrompt (reads store via .getState())
+
+gerald-app/app/settings.tsx       Settings screen: backend URL editor, clear history,
+                                  app version display
+
+
+FILES MODIFIED
+─────────────────────────────────────────────────────────────────
+
+gerald_bridge.py                  Backend updated:
+                                  + CORS middleware (allow_origins=["*"])
+                                  + GET  /projects  — returns PROJECTS list
+                                  + GET  /status    — returns gerald_status.json
+                                  + POST /ask       — mobile prompt endpoint (project field,
+                                                      background task, immediate 200 response)
+                                  + POST /register-device  — stores FCM token to gerald_devices.json
+                                  + POST /reject           — resets status to idle
+                                  + POST /send-to-claude-code  — stub (logs approval, sets executing)
+                                  All existing /start + /read endpoints preserved
+
+
+REMAINING WORK BEFORE RELEASE
+─────────────────────────────────────────────────────────────────
+
+1. NPM INSTALL
+   cd gerald-app && npm install
+   Installs all declared dependencies (Expo, RN, Zustand, Axios,
+   @react-native-voice/voice, expo-notifications, react-native-paper, etc.)
+
+2. FIREBASE SETUP
+   - Create Firebase project at console.firebase.google.com
+   - Enable Cloud Messaging (FCM)
+   - Download google-services.json → place at gerald-app/google-services.json
+   - Add "googleServicesFile": "./google-services.json" to app.json under android
+   - Replace "REPLACE_WITH_EAS_PROJECT_ID" in app.json with real EAS project ID
+   - Add firebase-admin to gerald_bridge.py to actually send push notifications
+     (currently /register-device stores tokens but sending is not implemented)
+
+3. APP ASSETS
+   - Add gerald-app/assets/icon.png (1024×1024)
+   - Add gerald-app/assets/adaptive-icon.png (1024×1024, Android adaptive)
+   - Add gerald-app/assets/notification-icon.png (96×96, white on transparent)
+   Without these, EAS Build will use Expo defaults but app.json references them.
+
+4. EAS BUILD SETUP
+   - eas login (Matt's Expo account)
+   - eas build:configure (links project to EAS)
+   - eas build --platform android --profile preview
+   This produces a signed APK for sideloading.
+
+5. NETWORK CONFIGURATION
+   - Update Settings screen base URL to Matt's PC's LAN IP (e.g. 192.168.1.x:8000)
+   - Ensure gerald_bridge.py is running (uvicorn gerald_bridge:app --host 0.0.0.0 --port 8000)
+   - Test GET /status from phone browser before first PTT use
+
+6. WIRE send-to-claude-code TO claude_desktop_controller.py
+   Currently POST /send-to-claude-code writes approval to outbox but does NOT
+   inject into the live Claude Code terminal window. Wire it to
+   claude_desktop_controller.py's send_to_claude_code() function for full loop.
+
+7. PTT VOICE TESTING
+   @react-native-voice/voice requires a native build (not Expo Go).
+   Run `eas build --profile development` for a dev client build,
+   or `eas build --profile preview` for a testable APK.
+
+8. NOTIFICATION PERMISSION FLOW
+   Android 13+ requires POST_NOTIFICATIONS runtime permission. This is
+   requested via expo-notifications but should be tested on a physical device.

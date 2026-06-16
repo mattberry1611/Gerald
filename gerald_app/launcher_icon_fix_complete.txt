@@ -1,0 +1,37 @@
+Gerald App - Android Launcher Icon Fix
+=======================================
+Date: 2026-06-15
+
+PROBLEM
+-------
+Build error: Android resource linking failed — resource mipmap/ic_launcher not found
+Root cause: The AndroidManifest.xml referenced @mipmap/ic_launcher but no mipmap
+directories or ic_launcher resources existed in:
+  android/app/src/main/res/
+
+CHANGES MADE
+------------
+No existing files were modified. Four new XML resource files were created:
+
+1. res/drawable/ic_launcher_background.xml
+   - Simple blue rectangle (#1A73E8) used as adaptive icon background layer
+
+2. res/drawable/ic_launcher_foreground.xml
+   - Vector "G" glyph in white, used as adaptive icon foreground layer
+
+3. res/mipmap-anydpi-v26/ic_launcher.xml
+   - Adaptive icon (API 26+) referencing ic_launcher_background + ic_launcher_foreground
+   - Enables rounded/squircle shapes on modern launchers
+
+4. res/mipmap-anydpi/ic_launcher.xml
+   - Fallback blue rectangle shape for API < 26 devices (all densities)
+
+AndroidManifest.xml — NOT CHANGED
+   Still references: android:icon="@mipmap/ic_launcher"
+   The new mipmap-anydpi/ic_launcher.xml satisfies this reference.
+
+NEXT STEPS (run by Matt)
+------------------------
+  flutter clean
+  flutter pub get
+  flutter run

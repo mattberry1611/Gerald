@@ -1,0 +1,27 @@
+Build Error Fix Summary
+=======================
+Date: 2026-06-15
+
+Fix 1 — lib/theme.dart (CardTheme → CardThemeData)
+---------------------------------------------------
+File: gerald_app/lib/theme.dart
+Line: 20
+Change: `cardTheme: const CardTheme(` → `cardTheme: const CardThemeData(`
+Reason: Flutter 3.7+ renamed the cardTheme property type from CardTheme to
+CardThemeData. Using CardTheme caused a type-assignment error at compile time.
+
+Fix 2 — android/app/build.gradle (core library desugaring)
+-----------------------------------------------------------
+File: gerald_app/android/app/build.gradle
+
+Change A — compileOptions block:
+Added `coreLibraryDesugaringEnabled true`
+Reason: flutter_local_notifications uses java.time APIs not available on older
+Android API levels. Desugaring backports those APIs so the build succeeds.
+
+Change B — new dependencies block at end of file:
+Added `coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.1.4'`
+Reason: The desugar_jdk_libs artifact is the runtime support library required
+when coreLibraryDesugaringEnabled is true.
+
+No other files were modified. App UI and features are unchanged.

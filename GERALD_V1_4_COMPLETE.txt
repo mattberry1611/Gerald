@@ -1,0 +1,133 @@
+GERALD V1.4 — COMPLETE
+======================
+Date: 2026-06-16
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+WHAT WAS COMPLETED IN V1.4
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+1. AUTONOMOUS BUILD VERIFICATION ✅
+   File: build_verifier.py
+   - Full sequence: flutter clean → flutter pub get → flutter build apk
+   - Retry loop (up to 2 retries) with targeted auto-fix per attempt:
+       dependency error → flutter pub upgrade
+       Gradle error → clears .gradle cache
+       OOM error → bumps JVM heap in gradle.properties
+   - Result includes steps[], fixes_applied[], attempts count
+   - gerald_bridge.py updated to use run_build_verification_sequence()
+   - Endpoints: POST /build-verify, GET /build-status
+   - Flutter UI: settings_screen.dart BUILD button + status display
+   Details: build_verification_complete.txt
+
+2. MULTI-AI PROVIDER FRAMEWORK ✅
+   File: multi_ai_router.py
+   Providers:
+     - Claude Code (claude.ps1 CLI) — active, no API key needed
+     - OpenAI GPT-4o (REST API, urllib) — live, requires API key
+     - Google Gemini 2.0 Flash (REST API, urllib) — live, requires API key
+   - Real API calls via Python stdlib (no extra pip installs needed)
+   - Provider status: active / needs_api_key
+   - Config persisted to ai_provider_config.json
+   - Endpoints: GET /provider-status, POST /set-provider
+   - Flutter UI: settings_screen.dart AI Provider selector + key input
+   Details: multi_ai_framework_complete.txt
+
+3. CLOUD MIGRATION PLANNING ✅
+   Directory: cloud_migration/
+   Files:
+     migration_plan.md          — phases, architecture, cost estimate
+     Dockerfile                 — Python 3.11-slim container
+     docker-compose.yml         — compose config
+     cloud_config.example.json  — config template (domain, auth, API keys, FCM)
+     nginx.conf                 — SSL-terminating reverse proxy
+     requirements_cloud.txt     — Python dependencies
+     cloud_setup.py (NEW)       — prerequisite checker + deployment plan printer
+   Target stack:
+     DigitalOcean $6/mo Droplet → nginx → uvicorn → gerald_bridge.py
+     Domain + Let's Encrypt HTTPS (free)
+     Firebase FCM for push notifications
+   New endpoints added to gerald_bridge.py:
+     POST /apk-upload, POST /notify, GET /pending-notification, POST /clear-notification
+   Details: cloud_migration_complete.txt
+
+4. REMOTE APK BUILD DELIVERY PLANNING ✅
+   File: remote_build/build_and_deliver.py
+   - Build → Copy locally → Write manifest → Upload to cloud → Notify Matt
+   - upload_apk_to_cloud() — HTTP POST to /apk-upload endpoint
+   - notify_matt_via_bridge() — HTTP POST to /notify (→ FCM)
+   - write_local_notification() — file-based fallback for LAN-only mode
+   - CLI: --cloud-url, --token, --notify flags
+   Plans:
+     remote_build/delivery_plan.md — full delivery architecture
+   Details: remote_build_delivery_complete.txt
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+FULL V1.4 FEATURE SET (all phases combined)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  - Flutter mobile app (HomeScreen, SettingsScreen, SplashScreen)
+  - Push-to-Talk (Mode A) + ConversationOrb (Mode B)
+  - 7-stage TaskStage progress bar + elapsed timer
+  - Task queue with sequential processing
+  - TTS responses via flutter_tts (default ON)
+  - Project Brain system (per-project brain files, viewer, init button)
+  - Automatic project creation via voice ("create project X")
+  - Per-project message isolation
+  - Autonomous Build Verification (clean → pub get → build + retry loop)
+  - Multi-AI Provider Framework (Claude active, OpenAI + Gemini via API)
+  - Cloud Migration Plan (DigitalOcean + nginx + HTTPS + FCM)
+  - Remote APK Build & Delivery (build + upload + notify flow)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+REMAINING WORK (not V1.4 scope)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  - Auto-trigger build verification after every Claude code edit
+  - Flutter ApkDeliveryService (background polling + new-build notification)
+  - Actually deploy to DigitalOcean (requires domain + droplet setup)
+  - Real FCM delivery (requires Firebase service account on VPS)
+  - Bearer token auth on all /start /ask endpoints (security)
+  - OpenAI/Gemini file I/O for full autonomous code editing
+  - Token usage + cost tracking in UI
+  - Signed release APK for production distribution
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+RECOMMENDED NEXT STEPS (V1.5)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  1. DEPLOY TO CLOUD
+     python cloud_migration/cloud_setup.py --check
+     python cloud_migration/cloud_setup.py --plan
+     Follow Phase 1-4 in the plan → gerald accessible anywhere (not just LAN)
+
+  2. AUTO-BUILD AFTER EDITS
+     In gerald_bridge.py run_claude(): after write_outbox(data), if status==done
+     call build_verifier.run_build_verification_sequence() in a background thread
+
+  3. FLUTTER APK DELIVERY SERVICE
+     Create lib/services/apk_delivery_service.dart:
+     - Poll /apk-status every 5 minutes
+     - Compare hash with SharedPreferences last_apk_hash
+     - Show notification on new build
+     - Open /apk-latest/download URL for install
+
+  4. SET YOUR OPENAI API KEY
+     curl -X POST http://localhost:8000/set-provider \
+       -H "Content-Type: application/json" \
+       -d '{"provider": "openai", "api_key": "sk-..."}'
+     Or: Gerald app → Settings → AI Provider → ChatGPT → enter key → Save
+
+  5. BEARER TOKEN AUTH
+     Add X-Gerald-Token header validation to /start and /ask endpoints
+     Store token in cloud_config.json auth.api_token
+     Update Flutter Settings with token input field
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+HOW TO RUN GERALD V1.4
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  cd C:\CommuteCoder
+  uvicorn gerald_bridge:app --host 0.0.0.0 --port 8000 --reload
+
+  Flutter app:
+    cd C:\CommuteCoder\gerald_app
+    flutter pub get
+    flutter run
+
+  Bridge URL in app Settings: http://YOUR_LAN_IP:8000

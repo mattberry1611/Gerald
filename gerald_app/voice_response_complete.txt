@@ -1,0 +1,46 @@
+VOICE RESPONSE SYSTEM — COMPLETE
+=================================
+Date: 2026-06-16
+Version: V1.4
+
+STATUS: Already implemented in V1.2; verified and enhanced in V1.4.
+
+IMPLEMENTATION:
+---------------
+File: lib/services/tts_service.dart
+  - flutter_tts package
+  - Singleton: TtsService.instance
+  - speak(text): stops any current speech, then speaks text
+  - stop(): stops speech, fires onSpeakingChanged(false)
+  - onSpeakingChanged callback notifies AppState
+
+File: lib/providers/app_state.dart
+  - _ttsEnabled: bool, DEFAULT CHANGED TO TRUE (V1.4)
+  - isSpeaking getter: true while TTS is active
+  - stopSpeaking(): delegates to TtsService.instance.stop()
+  - setTtsEnabled(bool): persists to SharedPreferences
+  - In _readResult(): message is added (UI updates) BEFORE TTS speaks
+    (correct order: display first, then speak)
+
+File: lib/widgets/status_panel.dart
+  - "SPEAKING" status label + purple dot when isSpeaking
+  - STOP action button appears in status panel while speaking
+
+File: lib/screens/home_screen.dart (both _CompactBar and _VoiceSection):
+  - Stop Speaking utility button (stop_circle icon) appears in utility row
+    when isSpeaking = true. Works in Mode A and Mode B.
+
+File: lib/screens/settings_screen.dart (unchanged):
+  - "Speak Responses" toggle (SwitchListTile) persists preference
+
+FEATURES:
+---------
+✓ flutter_tts used
+✓ Gerald speaks responses aloud
+✓ Speak Responses ON/OFF toggle (Settings screen)
+✓ Default ON (changed from false to true in V1.4)
+✓ Stop Speaking button (status panel + utility row)
+✓ Speaking indicator (purple SPEAKING status in status panel)
+✓ Works in Mode A and Mode B
+✓ Speak only after response is displayed
+✓ Auto-resume Mode B listening after speaking completes

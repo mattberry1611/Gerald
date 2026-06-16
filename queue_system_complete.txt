@@ -1,0 +1,46 @@
+COMMAND QUEUE SYSTEM — COMPLETE
+================================
+Date: 2026-06-16
+Version: V1.4
+
+IMPLEMENTATION:
+---------------
+File: gerald_app/lib/providers/app_state.dart
+
+  _commandQueue: List<String> — FIFO queue of pending prompts
+
+  sendPrompt(prompt):
+    if _isBusy:
+      _commandQueue.add(trimmed)
+      _taskStage = TaskStage.queued  (5% progress shown)
+      _log('Queued [N]: ...')        (queue count in activity log)
+      notifyListeners()
+      return
+    else:
+      _executePrompt(trimmed)
+
+  _processNextInQueue():
+    - Called from _poll() when status → idle/error after active task
+    - Called from reject() when task is rejected
+    - Removes first item from _commandQueue, calls _executePrompt()
+    - Logs remaining count
+
+  queueCount getter → drives status panel badge
+
+File: gerald_app/lib/widgets/status_panel.dart
+  Queue count row (visible when queueCount > 0):
+    - Queue icon + "N task(s) queued" in amber
+    - Updates live as tasks are processed
+
+BEHAVIOR:
+---------
+✓ Multiple tasks can be submitted without overwriting
+✓ Queue count visible in status panel + activity log
+✓ Activity log entries: [HH:MM:SS] Queued [N]: <task>
+✓ Sequential processing (one active task at a time)
+✓ Rapid submissions all pushed to _commandQueue safely
+✓ Auto-dequeue after each task completes
+✓ Reject also triggers next queue item dequeue
+✓ clearMessages() also clears the queue
+
+BUILD: ✓ flutter build apk --debug — PASSES

@@ -1,0 +1,43 @@
+Gerald Flutter App — Adaptive Icon Fix
+=======================================
+Date: 2026-06-15
+
+Problem
+-------
+Build failed with:
+  android/app/src/main/res/mipmap-anydpi/ic_launcher.xml:
+  <adaptive-icon> elements require a sdk version of at least 26.
+
+Root cause:
+  The file mipmap-anydpi/ic_launcher.xml contained an <adaptive-icon> element.
+  The "mipmap-anydpi" qualifier (no version suffix) makes Android apply this
+  resource to ALL API levels, including minSdk 21. But <adaptive-icon> was
+  introduced in API 26 and cannot be used on older devices.
+
+Fix Applied
+-----------
+Deleted:
+  android/app/src/main/res/mipmap-anydpi/ic_launcher.xml
+  (and the now-empty mipmap-anydpi/ directory)
+
+Kept (unchanged):
+  android/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml
+    — adaptive icon (foreground + background drawables) used on API 26+
+  android/app/src/main/res/mipmap-hdpi/ic_launcher.png
+  android/app/src/main/res/mipmap-mdpi/ic_launcher.png
+  android/app/src/main/res/mipmap-xhdpi/ic_launcher.png
+  android/app/src/main/res/mipmap-xxhdpi/ic_launcher.png
+  android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png
+    — density-bucketed PNG icons used on API 21–25
+
+How Android resolves @mipmap/ic_launcher after the fix:
+  API 21–25  →  density-specific PNG from mipmap-hdpi / mipmap-mdpi / etc.
+  API 26+    →  adaptive icon from mipmap-anydpi-v26/ic_launcher.xml
+
+No Dart code changed. No app branding removed. AndroidManifest.xml unchanged
+(still references android:icon="@mipmap/ic_launcher").
+
+Next steps (Matt):
+  flutter clean
+  flutter pub get
+  flutter run

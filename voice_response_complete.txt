@@ -1,0 +1,41 @@
+VOICE RESPONSE SYSTEM — COMPLETE
+=================================
+Date: 2026-06-16
+Version: V1.4
+
+IMPLEMENTATION:
+---------------
+File: gerald_app/lib/services/tts_service.dart
+  - flutter_tts singleton (TtsService.instance)
+  - speak(text): stops current speech, speaks new text, awaits completion
+  - stop(): stops TTS and fires onSpeakingChanged(false)
+  - onSpeakingChanged callback notifies AppState
+  - 120s timeout guard on speak()
+
+File: gerald_app/lib/providers/app_state.dart
+  - _ttsEnabled: bool, DEFAULT TRUE (V1.4)
+  - isSpeaking getter reflects TTS state
+  - stopSpeaking(): delegates to TtsService.instance.stop()
+  - setTtsEnabled(bool): persists via SharedPreferences
+  - _readResult(): displays message FIRST, then TTS speaks (correct order)
+  - Auto-resume conversation mode listening after speech completes
+
+File: gerald_app/lib/widgets/status_panel.dart
+  - "SPEAKING" status label + purple dot when isSpeaking
+  - STOP action button in status panel while speaking
+
+File: gerald_app/lib/screens/settings_screen.dart
+  - "Speak Responses" SwitchListTile persists preference
+
+FEATURES:
+---------
+✓ flutter_tts used for TTS output
+✓ Gerald speaks responses aloud after display
+✓ Speak Responses ON/OFF toggle (Settings screen)
+✓ Default ON (V1.4 change from false to true)
+✓ Stop Speaking button (status panel + utility row)
+✓ Speaking indicator (purple SPEAKING status)
+✓ Works in Mode A (Push-to-Talk) and Mode B (Conversation)
+✓ Auto-resume Mode B listening after speech completes
+
+BUILD: ✓ flutter build apk --debug — PASSES

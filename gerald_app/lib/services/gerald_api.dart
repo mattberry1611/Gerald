@@ -1,0 +1,221 @@
+import 'dart:convert';
+import 'package:http/http.dart' as http;
+import '../models/project_brain.dart';
+
+class GeraldApi {
+  final String baseUrl;
+
+  GeraldApi(this.baseUrl);
+
+  Future<Map<String, dynamic>> sendPrompt(String prompt,
+      {String? project}) async {
+    final response = await http
+        .post(
+          Uri.parse('$baseUrl/start'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({'prompt': prompt, 'project': project}),
+        )
+        .timeout(const Duration(seconds: 30));
+
+    if (response.statusCode >= 200 && response.statusCode < 300) {
+      final decoded = jsonDecode(response.body);
+      if (decoded is Map<String, dynamic>) return decoded;
+      return {'message': decoded.toString()};
+    }
+    throw Exception('Backend error: ${response.statusCode}');
+  }
+
+  Future<Map<String, dynamic>> readResult() async {
+    final response = await http
+        .get(Uri.parse('$baseUrl/read'))
+        .timeout(const Duration(seconds: 10));
+
+    if (response.statusCode == 200) {
+      final decoded = jsonDecode(response.body);
+      if (decoded is Map<String, dynamic>) return decoded;
+      return {'output': decoded.toString()};
+    }
+    throw Exception('Read error: ${response.statusCode}');
+  }
+
+  Future<Map<String, dynamic>> getStatus() async {
+    final response = await http
+        .get(Uri.parse('$baseUrl/status'))
+        .timeout(const Duration(seconds: 5));
+    if (response.statusCode == 200) {
+      final decoded = jsonDecode(response.body);
+      if (decoded is Map<String, dynamic>) return decoded;
+    }
+    return {'status': 'idle'};
+  }
+
+  Future<List<Map<String, dynamic>>> getProjectsFull() async {
+    final response = await http
+        .get(Uri.parse('$baseUrl/projects'))
+        .timeout(const Duration(seconds: 5));
+    if (response.statusCode == 200) {
+      final data = jsonDecode(response.body);
+      if (data is List) {
+        return data.whereType<Map<String, dynamic>>().toList();
+      }
+    }
+    return [];
+  }
+
+  Future<List<String>> getProjects() async {
+    final full = await getProjectsFull();
+    return full
+        .map((p) => (p['name'] ?? '').toString())
+        .where((s) => s.isNotEmpty)
+        .toList();
+  }
+
+  Future<void> approve() async {
+    await http
+        .post(
+          Uri.parse('$baseUrl/send-to-claude-code'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({'approved': true}),
+        )
+        .timeout(const Duration(seconds: 10));
+  }
+
+  Future<void> reject() async {
+    await http
+        .post(
+          Uri.parse('$baseUrl/reject'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({}),
+        )
+        .timeout(const Duration(seconds: 10));
+  }
+
+  // ── Project Brain ───────────────────────────────────────────────────────────
+
+  Future<ProjectBrain?> getProjectBrain(String projectName) async {
+    try {
+      final response = await http
+          .get(Uri.parse('$baseUrl/project-brain/$projectName'))
+          .timeout(const Duration(seconds: 8));
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        if (data is Map<String, dynamic>) {
+          return ProjectBrain.fromJson(data);
+        }
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  Future<Map<String, dynamic>> initProjectBrain(String projectName) async {
+    final response = await http
+        .post(
+          Uri.parse('$baseUrl/init-brain/$projectName'),
+          headers: {'Content-Type': 'application/json'},
+        )
+        .timeout(const Duration(seconds: 10));
+    if (response.statusCode == 200) {
+      final decoded = jsonDecode(response.body);
+      if (decoded is Map<String, dynamic>) return decoded;
+    }
+    throw Exception('Init brain failed: ${response.statusCode}');
+  }
+
+  // ── Automatic Project Creation ──────────────────────────────────────────────
+
+  Future<Map<String, dynamic>> createProject({
+    required String name,
+    String path = '',
+    String description = '',
+  }) async {
+    final response = await http
+        .post(
+          Uri.parse('$baseUrl/create-project'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({
+            'name': name,
+            'path': path,
+            'description': description,
+          }),
+        )
+        .timeout(const Duration(seconds: 15));
+
+    if (response.statusCode >= 200 && response.statusCode < 300) {
+      final decoded = jsonDecode(response.body);
+      if (decoded is Map<String, dynamic>) return decoded;
+    }
+    throw Exception('Create project error: ${response.statusCode}');
+  }
+
+  // ── Build Verification ──────────────────────────────────────────────────────
+
+  Future<Map<String, dynamic>> triggerBuild({
+    String flavor = 'debug',
+    String project = 'CommuteCoder',
+  }) async {
+    final response = await http
+        .post(
+          Uri.parse('$baseUrl/build-verify'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({'flavor': flavor, 'project': project}),
+        )
+        .timeout(const Duration(seconds: 30));
+    if (response.statusCode == 200) {
+      return jsonDecode(response.body) as Map<String, dynamic>;
+    }
+    throw Exception('Build trigger failed: ${response.statusCode}');
+  }
+
+  Future<Map<String, dynamic>> getBuildStatus() async {
+    final response = await http
+        .get(Uri.parse('$baseUrl/build-status'))
+        .timeout(const Duration(seconds: 10));
+    if (response.statusCode == 200) {
+      return jsonDecode(response.body) as Map<String, dynamic>;
+    }
+    return {'status': 'error', 'error_count': 0, 'is_running': false};
+  }
+
+  // ── Multi-AI Provider ───────────────────────────────────────────────────────
+
+  Future<Map<String, dynamic>> getProviderStatus() async {
+    final response = await http
+        .get(Uri.parse('$baseUrl/provider-status'))
+        .timeout(const Duration(seconds: 8));
+    if (response.statusCode == 200) {
+      return jsonDecode(response.body) as Map<String, dynamic>;
+    }
+    return {'active_provider': 'claude', 'providers': []};
+  }
+
+  Future<Map<String, dynamic>> setProvider(
+      String providerId, {
+      String apiKey = '',
+    }) async {
+    final response = await http
+        .post(
+          Uri.parse('$baseUrl/set-provider'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({'provider': providerId, 'api_key': apiKey}),
+        )
+        .timeout(const Duration(seconds: 10));
+    if (response.statusCode == 200) {
+      return jsonDecode(response.body) as Map<String, dynamic>;
+    }
+    throw Exception('Set provider failed: ${response.statusCode}');
+  }
+
+  // ── Remote APK Delivery ─────────────────────────────────────────────────────
+
+  Future<Map<String, dynamic>> getApkStatus() async {
+    final response = await http
+        .get(Uri.parse('$baseUrl/apk-status'))
+        .timeout(const Duration(seconds: 10));
+    if (response.statusCode == 200) {
+      return jsonDecode(response.body) as Map<String, dynamic>;
+    }
+    return {'available': false};
+  }
+
+  String getApkDownloadUrl() => '$baseUrl/apk-latest/download';
+}

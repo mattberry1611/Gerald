@@ -1,0 +1,154 @@
+COMMUTECODER HOME SCREEN LAYOUT
+================================
+Date: 2026-06-15
+Based on: home_screen_plan.txt (APPROVED)
+
+ELEMENT TREE
+------------
+
+<body id="commutecoder-app" class="dark-theme">
+
+  <!-- 1. STATUS BAR (top, full-width) -->
+  <header id="status-bar" class="status-idle">
+    <span id="status-label">Gerald is ready</span>
+    <span id="server-url">http://localhost:8080</span>
+  </header>
+
+  <!-- 2. MAIN GRID -->
+  <main id="main-grid">
+
+    <!-- 2a. LEFT COLUMN: Current Project Panel -->
+    <aside id="project-panel">
+      <h2>Active Project</h2>
+      <p id="project-name" class="project-name-display">--</p>
+      <code id="project-path" class="project-path-display">--</code>
+      <span id="project-badge" class="badge">Undetected</span>
+      <button id="btn-refresh-project" title="Re-detect from last transcript">↻ Refresh</button>
+      <label for="project-override">Override:</label>
+      <select id="project-override">
+        <option value="">Auto-detect</option>
+        <option value="CommuteCoder">CommuteCoder</option>
+        <option value="RentMe">RentMe</option>
+        <option value="PlantBrain">PlantBrain</option>
+      </select>
+    </aside>
+
+    <!-- 2b. RIGHT COLUMN: Claude Output Panel -->
+    <section id="output-panel">
+      <h2>Claude's Response
+        <span id="response-timestamp" class="timestamp"></span>
+      </h2>
+      <div id="response-body" class="scrollable-output">
+        <p class="placeholder-text">Speak a task — Claude's plan will appear here.</p>
+      </div>
+      <div id="output-actions">
+        <button id="btn-approve" class="btn-primary" disabled>Approve &amp; Send</button>
+        <button id="btn-discard" class="btn-secondary" disabled>Discard</button>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- 3. VOICE INPUT (center-bottom, prominent) -->
+  <div id="voice-section">
+    <button id="btn-mic" class="mic-idle" aria-label="Start voice input (Spacebar)">
+      🎙
+    </button>
+    <p id="mic-status-label">Tap to speak</p>
+    <p id="live-transcript" class="live-transcript"></p>
+  </div>
+
+  <!-- 4. ACTIVITY LOG (bottom, full-width) -->
+  <footer id="activity-log-section">
+    <div id="log-header">
+      <h2>Activity Log</h2>
+      <button id="btn-clear-log" class="btn-ghost">Clear</button>
+    </div>
+    <ol id="activity-log" class="log-list" reversed>
+      <!-- Entries injected by JS: [timestamp] [icon] [message] -->
+    </ol>
+  </footer>
+
+</body>
+
+
+COPY / LABELS
+-------------
+- App title in browser tab:        "CommuteCoder — Gerald"
+- Status states (status-bar text):
+    IDLE        → "Gerald is ready"
+    LISTENING   → "Listening..."
+    PROCESSING  → "Asking Claude..."
+    APPROVED    → "Task sent to Claude Code"
+    ERROR       → "<error message>"
+- Mic button label (idle):         "Tap to speak"
+- Mic button label (listening):    "Listening... (press Space to stop)"
+- Mic button label (processing):   "Processing..."
+- Output placeholder text:         "Speak a task — Claude's plan will appear here."
+- Approve button:                  "Approve & Send"
+- Discard button:                  "Discard"
+- Override dropdown label:         "Override:"
+- Log header:                      "Activity Log"
+- Clear log button:                "Clear"
+
+
+COLOUR TOKENS (dark theme)
+--------------------------
+--bg-primary:     #1e1e1e   (page background)
+--bg-panel:       #252526   (panels)
+--bg-panel-alt:   #2d2d2d   (sidebars)
+--text-primary:   #d4d4d4   (body copy)
+--text-muted:     #858585   (secondary text, timestamps)
+--accent:         #3794ff   (interactive elements, focus rings)
+--status-idle:    #3c3c3c   (status bar — idle)
+--status-listen:  #1a6fa5   (status bar — listening)
+--status-process: #b8860b   (status bar — processing)
+--status-ok:      #1e7f38   (status bar — approved)
+--status-error:   #c0392b   (status bar — error)
+--btn-primary-bg: #3794ff
+--btn-primary-fg: #ffffff
+--btn-danger-bg:  #c0392b
+--btn-danger-fg:  #ffffff
+--btn-ghost-fg:   #858585
+--mic-idle:       #555555
+--mic-active:     #c0392b   (red pulse when listening)
+--font-mono:      "Fira Code", Consolas, monospace
+--font-ui:        system-ui, sans-serif
+
+
+SPACING / LAYOUT (CSS Grid)
+----------------------------
+body layout:
+  rows:    [status-bar: 40px] [main-grid: 1fr] [voice-section: 140px] [activity-log: 200px]
+  columns: 1 column, full-width container
+
+main-grid:
+  columns: [project-panel: 260px] [output-panel: 1fr]
+  gap:     16px
+  padding: 16px
+
+activity-log:
+  max-height: 200px
+  overflow-y: scroll
+  font-size:  0.8rem
+
+
+MIC BUTTON STATES (CSS classes on #btn-mic)
+-------------------------------------------
+.mic-idle      → background: var(--mic-idle); no animation
+.mic-listening → background: var(--mic-active); keyframe pulse scale 1→1.1→1
+.mic-processing → background: var(--status-process); spinner overlay (border animation)
+
+
+JAVASCRIPT BEHAVIOUR NOTES
+---------------------------
+- Space bar toggles mic (keydown listener on document)
+- /ask response populates #response-body; enables Approve & Discard buttons
+- Approve → POST /send-to-claude-code → status bar flashes green
+- Discard → clears #response-body; disables buttons; resets to idle
+- Activity log entries: prepend <li> with [hh:mm:ss] icon message
+- project-override select onchange → POST /set-project or query-param on next /ask
+- Status bar colour driven by CSS class on #status-bar (status-idle / listening / processing / approved / error)
+
+
+STATUS: PENDING LAYOUT REVIEW

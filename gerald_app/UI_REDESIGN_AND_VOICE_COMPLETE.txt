@@ -1,0 +1,208 @@
+═══════════════════════════════════════════════════════════════════
+ GERALD APP — UI REDESIGN + VOICE RESPONSE — COMPLETE
+ Date: 2026-06-15
+═══════════════════════════════════════════════════════════════════
+
+BUILD STATUS: ✓ SUCCESSFUL — app-debug.apk built without errors
+
+
+── FILES MODIFIED ─────────────────────────────────────────────────
+
+lib/theme.dart
+  - Completely new color palette (electric blue primary, green accent)
+  - New theme constants: kBgColor, kSurface2, kBorderColor, kAccentBlue,
+    kAccentGreen, kAccentPurple, kTextPrimary, kTextSecondary, kTextMuted
+  - Premium ThemeData with card theme, switch theme, bottom sheet theme,
+    snack bar theme, dialog theme all configured for dark/elite aesthetic
+
+lib/providers/app_state.dart
+  - Added: bool _isSpeaking, bool get isSpeaking
+  - Added: Future<void> stopSpeaking()
+  - Added: void _onSpeakingChanged(bool speaking)
+  - In init(): wires TtsService.instance.onSpeakingChanged callback so
+    isSpeaking state propagates to all widgets via notifyListeners()
+
+lib/services/tts_service.dart
+  - Added: bool isSpeaking getter
+  - Added: void Function(bool)? onSpeakingChanged callback
+  - Added: _setActive(), _handleDone() internal state management
+  - FlutterTts handlers: setStartHandler, setCompletionHandler, setCancelHandler
+  - stop() now properly fires the done handler to reset state
+
+lib/screens/splash_screen.dart
+  - Full redesign: expanding blue ring animation, glow halo behind logo
+  - Rounded square logo (22px radius) with border
+  - "GERALD" title with 14 letter spacing
+  - "AI CODING SUPERVISOR" subtitle in electric blue
+  - Loading indicator spinner at bottom
+
+lib/screens/home_screen.dart
+  - Complete redesign — all sections rebuilt
+  - Premium AppBar: 62px height, logo with blue glow shadow, two-line
+    title ("GERALD" / "AI CODING SUPERVISOR"), updated settings icon
+  - Gradient separator line under AppBar (electric blue)
+  - Segmented mode selector (_ModeSelector): sliding indicator with
+    AnimatedAlign, icons for PTT and Conversation modes
+  - New _UtilityButton widget with active state styling
+  - Stop-speaking button appears in utility row when isSpeaking == true
+  - Updated _EmptyState: Gerald logo with glow, mode hint cards
+  - Bottom sheet for image picker updated to use new theme
+
+lib/screens/settings_screen.dart
+  - Full redesign with _Card, _SectionHeader, _PremiumSwitch, _InfoRow
+  - Centered SETTINGS title with gradient separator
+  - Cards with border styling for each settings group
+  - Premium toggle rows with icons and descriptions
+  - Version footer with mini logo and version number
+  - Connection status with color-coded indicator
+
+lib/widgets/status_panel.dart
+  - Animated status dot (_StatusDot) with pulsing glow
+  - Color-aware for speaking state (purple when TTS active)
+  - Box shadow with status color tint
+  - STOP button appears in panel row when isSpeaking == true
+  - Action buttons (APPROVE/REJECT/STOP) use bordered container styling
+
+lib/widgets/push_to_talk_button.dart
+  - Mode A (PTT): large 106px circle with dual-layer glow (inner + outer
+    BoxShadow), gradient fill, animated scale on listening
+  - Mode B: expanding ripple ring animation (separate _ripple controller),
+    combined with pulse scale for listening state
+  - Speaking state: purple color with volume icon for both modes
+  - AnimatedDefaultTextStyle for smooth label color transitions
+  - TickerProviderStateMixin (upgraded from Single) for two controllers
+
+lib/widgets/message_bubble.dart
+  - Gerald sender label includes mini logo icon + "GERALD" text
+  - Bubble border with accent color tint (blue for user, green for Gerald)
+  - SelectableText instead of Text (user can select/copy content)
+  - Better code block styling: dark background with teal monospace text
+  - Timestamp in kTextSecondary color with letter spacing
+
+lib/widgets/activity_log.dart
+  - Left accent bar (blue) for terminal aesthetic
+  - Terminal icon + "ACTIVITY LOG" label
+  - Timestamp highlighted in electric blue, message text in secondary
+  - RichText for colored timestamp vs message split
+
+lib/widgets/project_selector.dart
+  - Container styling matches new dark theme (kSurface2 + kBorderColor)
+  - Active project shown in kAccentBlue
+  - Bottom sheet updated: section header, dividers, styled list tiles
+
+lib/widgets/text_input_bar.dart
+  - Top+bottom border (kBorderColor) instead of just top
+  - Send button: custom styled container with active/disabled states
+  - Blue accent when active, grey when loading
+
+
+── FEATURES ADDED ────────────────────────────────────────────────
+
+VOICE RESPONSE (TTS) — ENHANCED:
+  - Gerald speaks responses automatically when "Speak Responses" ON
+  - isSpeaking state tracked via TtsService.onSpeakingChanged callback
+  - Stop speaking button: appears in voice utility row + status panel
+  - Visual indicator: status dot turns purple + label shows "SPEAKING"
+  - Mic button shows purple volume icon in both Mode A and Mode B
+  - Works in Mode A (push-to-talk) and Mode B (conversation)
+  - In Mode B: listening resumes AFTER Gerald finishes speaking
+  - Settings toggle: "Speak Responses ON/OFF" (stored in SharedPreferences)
+
+SEGMENTED MODE SELECTOR:
+  - Replaced chip row with premium segmented control
+  - Animated sliding indicator (AnimatedAlign)
+  - Icons for each mode
+  - Smooth 220ms transition
+
+RIPPLE ANIMATION (Mode B):
+  - Expanding ring radiates outward when listening
+  - Independent AnimationController from the scale pulse
+
+EMPTY STATE:
+  - Gerald logo with blue glow shadow
+  - Mode hint cards side-by-side
+
+
+── BRANDING CHANGES ──────────────────────────────────────────────
+
+Color palette shifted from green-primary to electric blue primary:
+  - Primary accent: #2979FF (electric blue)
+  - Success/Gerald accent: #00E676 (bright green)
+  - Speaking accent: #9C27B0 (purple)
+  - Background: #050509 (deeper black than before)
+  - Surface: #0C0C1A
+  - Elevated surface: #111126
+
+App Icon:
+  - flutter_launcher_icons regenerated all Android sizes from gerald_logo.png
+  - adaptive_icon_background: #1E1E2E (deep charcoal)
+  - All mipmap sizes: hdpi, mdpi, xhdpi, xxhdpi, xxxhdpi
+
+Typography:
+  - GERALD title: weight 900, letterSpacing 5 in AppBar
+  - Section headers: weight 700, letterSpacing 2-3
+  - Status labels: letterSpacing 1.8
+  - Monospace code blocks: 12.5pt teal (#7EC8C8)
+
+
+── REMAINING ISSUES ──────────────────────────────────────────────
+
+None blocking. Informational only:
+  - 70x flutter analyze "info" warnings:
+    * withOpacity() deprecated — safe, no functional impact
+    * prefer_const_constructors — cosmetic, no functional impact
+  - Kotlin Gradle Plugin warning from flutter_tts + speech_to_text plugins
+    (upstream plugin issue, not our code)
+
+Possible future improvements:
+  - Migrate withOpacity() → withValues(alpha: x) for future Flutter compat
+  - Add enter/exit animation on mode selector content
+  - Add haptic feedback on mode switch
+
+
+── HOW TO TEST ───────────────────────────────────────────────────
+
+1. Build and install:
+   cd C:\CommuteCoder\gerald_app
+   flutter run
+
+   Or to install the debug APK:
+   flutter install
+
+2. App Icon:
+   - Check Android launcher — should show gerald_logo.png
+   - Check app switcher — should show same icon
+   - Look for blue glow in splash screen
+
+3. UI / UX:
+   - Verify splash screen: expanding ring, glow, progress indicator
+   - Home screen: premium AppBar with two-line Gerald header
+   - Status panel: animated dot, correct colors per state
+   - Mode selector: tap A ↔ B, verify sliding indicator animates
+   - Empty state: centered logo with glow + mode hints
+
+4. Voice Controls:
+   - Mode A: press and hold the blue circle mic → turns red, "LISTENING"
+   - Mode A: release → sends recognized speech
+   - Mode B: tap "CONVERSATION" mode → auto-starts listening
+   - Mode B: speaking: expanding ripple ring visible
+
+5. Voice Response (TTS):
+   - Go to Settings → enable "Speak Responses"
+   - Send a voice command
+   - Gerald should speak response aloud
+   - Status dot turns purple, "SPEAKING" label appears
+   - STOP button appears in utility row and status panel
+   - Tap STOP → TTS stops immediately
+
+6. Backend URL:
+   - Settings → enter your PC's LAN IP (e.g. http://192.168.1.x:8000)
+   - Tap SAVE & RECONNECT
+   - Status dot should change from red OFFLINE to blue/green
+
+7. Conversation mode + TTS:
+   - Enable both Conversation Mode and Speak Responses in Settings
+   - Send a voice command
+   - Gerald speaks → when done → auto-resumes listening (Mode B)
+
+═══════════════════════════════════════════════════════════════════

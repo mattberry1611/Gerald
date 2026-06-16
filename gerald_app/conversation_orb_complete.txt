@@ -1,0 +1,63 @@
+CONVERSATION ORB — COMPLETE
+===========================
+Date: 2026-06-16
+Version: V1.4
+
+IMPLEMENTATION:
+---------------
+File: lib/widgets/conversation_orb.dart (NEW)
+
+OrbState enum:
+  idle, listening, thinking, speaking
+
+ConversationOrb widget (StatefulWidget):
+  - size parameter (default 110px)
+  - state parameter (OrbState)
+  - 4 AnimationControllers: rotation, pulse, wave, burst
+
+Particle System:
+  - 20 particles total: 15 on 3 orbital rings (tilted at 0.25, 1.05, 1.85 rad) + 5 scattered
+  - Each particle: orbitTilt, orbitRadius, startAngle, speedFactor, size
+  - Built once with Random(seed: 73) for deterministic layout
+  - Projected from 3D orbital coordinates to 2D using trig
+  - Depth-sorted (back-to-front) for correct 3D layering
+  - Depth-based opacity (0.25 → 1.0) and size (50% → 100%) scaling
+
+_OrbPainter (CustomPainter):
+  1. Wide ambient glow (RadialGradient, 4x core radius)
+  2. Tight mid glow (2.2x core radius)
+  3. Speaking wave rings (4 concentric rings pulsing outward) — speaking only
+  4. Back-layer particles (z < 0)
+  5. Core sphere (RadialGradient: highlight → color → shadow)
+  6. Specular highlight (small bright circle, upper-left)
+  7. Front-layer particles (z >= 0)
+  8. Burst ring (state-activation flash)
+
+State Animations:
+  idle:      rotation 12s, pulse 2.8s  — color: #3E4060 (dim)
+  listening: rotation 5s,  pulse 1.1s  — color: #00E676 (green)
+  thinking:  rotation 6s,  pulse 1.6s  — color: #2979FF (blue)
+  speaking:  rotation 3s,  pulse 0.7s  — color: #9C27B0 (purple)
+             + 4 radial wave rings emanating from core
+
+Burst animation:
+  500ms scale ring on OrbState.idle → active transitions
+
+Integration (push_to_talk_button.dart):
+  Mode B (conversation) now renders _buildOrbView() instead of old indicator:
+    listening → OrbState.listening
+    isLoading → OrbState.thinking
+    isSpeaking → OrbState.speaking
+    else       → OrbState.idle
+
+FEATURES:
+---------
+✓ Inspired by Gerald brand colors (blue/green/purple)
+✓ Particle orbital system (3D-projected)
+✓ Listening animation (green, faster pulse)
+✓ Thinking animation (blue, medium pulse)
+✓ Speaking animation (purple, fast pulse + wave rings)
+✓ Idle animation (dim, slow breathing)
+✓ Premium appearance (specular highlight, depth-sorted particles)
+✓ Dark theme compatible (all colors from theme.dart palette)
+✓ No external animation libraries — pure Flutter CustomPainter

@@ -1,0 +1,42 @@
+{
+  "_comment": "Copy to cloud_config.json and fill in your values. Never commit real secrets.",
+
+  "server": {
+    "host": "0.0.0.0",
+    "port": 8000,
+    "domain": "gerald.yourdomain.com",
+    "https": true
+  },
+
+  "auth": {
+    "api_token": "REPLACE_WITH_LONG_RANDOM_TOKEN",
+    "token_header": "Authorization",
+    "token_scheme": "Bearer"
+  },
+
+  "ai_providers": {
+    "active": "claude",
+    "anthropic_api_key": "sk-ant-REPLACE",
+    "openai_api_key": "sk-REPLACE",
+    "google_api_key": "REPLACE"
+  },
+
+  "projects": [
+    {"name": "CommuteCoder", "path": "/projects/CommuteCoder"},
+    {"name": "RentMe",       "path": "/projects/RentMe"},
+    {"name": "PlantBrain",   "path": "/projects/PlantBrain"}
+  ],
+
+  "data_dir": "/app/data",
+
+  "notifications": {
+    "fcm_service_account_json": "/app/firebase-service-account.json",
+    "enabled": false
+  },
+
+  "build_verification": {
+    "flutter_path": "/usr/local/bin/flutter",
+    "auto_verify_after_edit": false,
+    "default_flavor": "debug"
+  }
+}

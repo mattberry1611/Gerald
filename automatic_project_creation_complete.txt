@@ -1,0 +1,59 @@
+AUTOMATIC PROJECT CREATION — COMPLETE
+======================================
+Date: 2026-06-16
+Phase: V1.4 Phase 3
+
+WHAT WAS BUILT
+--------------
+When a new app idea arises, Gerald can automatically create a dedicated project
+folder with all required brain files and register it in the project list.
+
+BACKEND (gerald_bridge.py)
+--------------------------
+- create_brain_files(project_path, project_name, description):
+  Creates 4 stub brain files in the project directory (skips existing):
+    project_brain.md, roadmap.md, current_status.md, architecture.md
+- POST /create-project endpoint:
+  - Accepts: name, path (optional, defaults to C:\{name}), description
+  - Checks for duplicates (name collision)
+  - Creates directory (os.makedirs) + brain stubs
+  - Appends to gerald_projects.json and saves
+  - Returns: { ok, project, message }
+- Voice command detection (NEW in Phase 3):
+  - detect_create_project_name(text): parses text starting with
+    "create project X", "new project X", "make project X", etc.
+  - In POST /start: if voice command detected, auto-creates project
+    immediately (not via Claude) and writes result to outbox for TTS readout
+  - Supported prefixes: "create new project", "create project", "new project",
+    "make new project", "make project", "start project", "create new app",
+    "create app", "new app"
+
+FLUTTER (gerald_app)
+--------------------
+- lib/services/gerald_api.dart — createProject(name, path, description) method
+  calling POST /create-project
+- lib/providers/app_state.dart — createProject() method + refreshProjects() public
+- lib/providers/app_state.dart — _detectCreateProjectName(text) static method:
+  Same prefix detection as backend; fires BEFORE sending to Claude.
+  Creates project directly → confirms in chat → speaks via TTS → auto-selects project
+- lib/widgets/project_selector.dart — _CreateProjectSheet:
+  Form with Project Name (required), Path (optional, auto-filled C:\{name}),
+  Description (optional). Shows error inline. Switches to new project on success.
+
+PROJECT FILE STRUCTURE (every new project)
+-------------------------------------------
+C:\{ProjectName}\
+  project_brain.md     — stub (Overview, Tech Stack, Architecture, Key Files)
+  roadmap.md           — stub (Current Sprint, Backlog, Done)
+  current_status.md    — stub (Active Work, Blockers, Next Up)
+  architecture.md      — stub (Structure, Data Flow, Key Decisions)
+
+VOICE EXAMPLE
+--------------
+User says: "create project WeatherApp"
+1. Flutter detects prefix "create project " → name = "WeatherApp"
+2. Calls POST /create-project {name: "WeatherApp"}
+3. C:\WeatherApp\ created with 4 brain stubs
+4. Registered in gerald_projects.json
+5. Gerald speaks: "Project 'WeatherApp' created. Select it from the project picker."
+6. App auto-selects WeatherApp

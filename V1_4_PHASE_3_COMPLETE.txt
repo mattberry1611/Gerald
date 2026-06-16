@@ -1,0 +1,55 @@
+GERALD V1.4 — PHASE 3 COMPLETE
+================================
+Date: 2026-06-16
+
+PHASE 3 FEATURES IMPLEMENTED
+------------------------------
+1. Project Brain System        → project_brain_system_complete.txt
+2. Automatic Project Creation  → automatic_project_creation_complete.txt
+3. Project Isolation           → project_isolation_complete.txt
+
+SUMMARY OF ALL CHANGES
+-----------------------
+
+gerald_bridge.py (backend):
+  + import re
+  + detect_create_project_name(text): parses "create project X" voice commands
+  + run_claude(): auto-creates brain stubs if project has no brain files
+  + /start endpoint: detects "create project X" → creates project → writes outbox
+  + POST /init-brain/{project_name}: manually initialize brain for existing project
+
+gerald_app/lib/services/gerald_api.dart:
+  + initProjectBrain(projectName): calls POST /init-brain/{name}
+
+gerald_app/lib/providers/app_state.dart:
+  + refreshProjects(): public wrapper for _fetchProjects()
+  + initProjectBrain(name): calls API + refreshes brain in state + logs
+  + _detectCreateProjectName(text): static voice command parser
+  + sendPrompt(): detects "create project X" → auto-creates → TTS confirm
+
+gerald_app/lib/widgets/project_selector.dart:
+  + _showBrain(): passes onInitBrain callback to _BrainSheet
+  + _BrainSheet → StatefulWidget with initing/initDone state
+  + "Init Brain" button in _BrainSheet when brain files missing
+  + _NoBrainView widget: shows missing-files info + Init Brain button
+
+C:\CommuteCoder\ (root brain files created):
+  + project_brain.md
+  + roadmap.md
+  + current_status.md
+  + architecture.md
+
+REQUIREMENTS MET
+-----------------
+✅ Every project has project_brain.md, roadmap.md, current_status.md, architecture.md
+✅ Gerald reads brain files before every task (brain injected into prompt)
+✅ Gerald updates brain files after tasks (update instructions in prompt)
+✅ Auto-creates brain stubs if missing when task runs on existing project
+✅ New app ideas → voice "create project X" → dedicated folder + brain files
+✅ Projects never mix files (isolation block in every Claude prompt)
+✅ Per-project outbox files (no output collision)
+✅ Flutter messages isolated per project
+✅ "Init Brain" button for existing projects with missing files
+✅ flutter analyze: 0 errors (101 info-level hints, all pre-existing)
+
+DO NOT START PHASE 4.

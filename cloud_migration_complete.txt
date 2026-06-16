@@ -1,0 +1,74 @@
+Gerald V1.4 — Cloud Migration Planning COMPLETE
+================================================
+Date: 2026-06-16
+
+WHAT WAS IMPLEMENTED
+---------------------
+All cloud migration planning and scaffolding is in place at:
+  C:\CommuteCoder\cloud_migration\
+
+Files created (prior phases):
+  migration_plan.md          — Full migration plan (phases, architecture, costs)
+  Dockerfile                 — Python 3.11-slim, installs deps, exposes port 8000
+  docker-compose.yml         — Service + optional nginx compose config
+  cloud_config.example.json  — Template for domain, auth token, API keys, FCM
+  nginx.conf                 — Reverse proxy config with SSL termination
+  requirements_cloud.txt     — fastapi, uvicorn[standard]
+
+New in this phase:
+  cloud_setup.py             — Deployment orchestrator:
+    --check   Validates prerequisites (Docker, Python, cloud_config.json, FCM key)
+              Detects missing API keys in config
+    --plan    Prints step-by-step deployment instructions:
+              Phase 1: DigitalOcean Droplet setup (Ubuntu 22.04, $6/mo)
+              Phase 2: Domain + HTTPS via Let's Encrypt / certbot / nginx
+              Phase 3: Firebase FCM push notifications
+              Phase 4: OpenAI API integration
+              Plus systemd service config, cost estimate, Docker alternative
+    --docker  Builds gerald-bridge Docker image locally for testing
+
+gerald_bridge.py — new endpoints added:
+  POST /apk-upload           — receives raw APK binary from build_and_deliver.py
+  POST /notify               — queues push notification, attempts FCM delivery
+  GET  /pending-notification — Flutter app polls this when backgrounded
+  POST /clear-notification   — Flutter app clears notification after display
+
+CLOUD ARCHITECTURE
+------------------
+  [Gerald App] → HTTPS/443 → [DigitalOcean nginx] → [uvicorn:8000]
+                                                           ↓
+                                              [claude.cmd via relay OR]
+                                              [OpenAI/Gemini REST API]
+
+COST ESTIMATE
+-------------
+  DigitalOcean 1GB Droplet:    $6/mo
+  Domain (.dev):               ~$1/mo ($12/yr)
+  Let's Encrypt SSL:           FREE
+  Firebase FCM:                FREE
+  OpenAI API (GPT-4o):         ~$0.01/task
+  TOTAL:                       ~$7-8/mo
+
+DEPLOYMENT STEPS (quick reference)
+------------------------------------
+  1. Create DigitalOcean Droplet (Ubuntu 22.04, $6/mo)
+  2. scp gerald_bridge.py build_verifier.py multi_ai_router.py root@IP:/app/
+  3. scp cloud_config.json root@IP:/app/
+  4. Install: apt install python3-pip nginx certbot python3-certbot-nginx
+  5. pip3 install fastapi uvicorn
+  6. Create /etc/systemd/system/gerald.service → systemctl enable --now gerald
+  7. Configure nginx reverse proxy for your domain
+  8. certbot --nginx -d gerald.yourdomain.com
+  9. Update Flutter Settings → Base URL to https://gerald.yourdomain.com
+
+OR with Docker:
+  python cloud_migration/cloud_setup.py --docker
+  docker run -d -p 8000:8000 gerald-bridge:latest
+
+REMAINING WORK
+--------------
+  - Actually deploy to DigitalOcean (requires Matt's domain + credit card)
+  - Add Bearer token auth to all /start, /ask endpoints (security hardening)
+  - Implement real FCM send via google-auth on the cloud server
+  - Webhook relay from cloud → local PC for claude.cmd (optional if using API)
+  - Update Flutter app Settings with cloud URL input + token field

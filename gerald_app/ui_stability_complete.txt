@@ -1,0 +1,46 @@
+UI STABILITY — COMPLETE
+=======================
+Date: 2026-06-16
+Version: V1.4
+
+CHANGES MADE:
+-------------
+1. home_screen.dart — wrapped body in SafeArea(bottom: false) to prevent
+   system nav bar overlap without double-padding issues.
+
+2. home_screen.dart — replaced inline [ActivityLog, VoiceSection] pair with
+   new _BottomSection widget that detects small screens (height < 620px) and
+   omits ActivityLog to prevent overflow when space is tight.
+
+3. home_screen.dart — _VoiceSection uses adaptive vertical padding (10px on
+   small screens, 14px on normal) to reduce total bottom height on compact
+   devices.
+
+4. home_screen.dart — _ModeSelector accepts a 'compact' flag: height reduces
+   from 42px → 36px and font from 10px → 9px on small screens.
+   Labels shortened from 'PUSH-TO-TALK'/'CONVERSATION' to 'MODE A'/'MODE B'
+   to prevent overflow at narrow widths.
+
+5. push_to_talk_button.dart — PTT button circle resizes: 106px → 84px,
+   glow ring 130px → 106px, icon 46px → 36px when screenH < 620px.
+
+6. home_screen.dart — _EmptyState wrapped in SingleChildScrollView so it
+   doesn't overflow on very small screens.
+
+7. Keyboard handling: resizeToAvoidBottomInset: true (unchanged) + existing
+   keyboardVisible check replaces full voice section with compact _CompactBar
+   (4 small icon buttons). This prevents any keyboard overflow.
+
+8. TextInputBar coexistence: when showTextInput is true, _BottomSection
+   is treated as 'small' (ActivityLog hidden), preventing vertical overflow
+   when text field + voice section stack together.
+
+VERIFICATION:
+-------------
+✓ flutter build apk --debug — succeeded
+✓ flutter analyze — 0 errors (84 info-only hints, all pre-existing)
+✓ Mode A mic button: always visible
+✓ Mode B orb: always visible
+✓ MODE A / MODE B labels: always visible
+✓ Keyboard open: compact bar shown (no overflow)
+✓ Small screen (< 620px): reduced sizes, no overflow

@@ -1,0 +1,54 @@
+PROJECT BRAIN SYSTEM — COMPLETE
+================================
+Date: 2026-06-16
+Phase: V1.4 Phase 3 (updated)
+
+WHAT WAS BUILT
+--------------
+A per-project context injection system that loads brain files from each project
+directory and automatically includes them in every Claude prompt.
+
+BACKEND (gerald_bridge.py)
+--------------------------
+- get_brain_content(project_path) — reads up to 4 brain markdown files from the
+  project directory: project_brain.md, roadmap.md, current_status.md, architecture.md.
+  Returns combined string with section headers.
+- Brain is automatically injected into every Claude prompt under a
+  "# Project Brain (Context)" section.
+- Brain UPDATE instructions appended to every prompt (current_status.md always,
+  roadmap.md / project_brain.md / architecture.md if relevant).
+- Auto-init: if project has 0 brain files when /start runs, create_brain_files()
+  is called before the task begins (no brain files = stubs created first).
+- POST /init-brain/{project_name} endpoint — manually initialize brain stubs
+  for any existing project. Returns files created.
+- /project-brain/{project_name} GET endpoint — returns brain JSON:
+  { project, path, description, brain, files[], has_brain }
+
+FLUTTER (gerald_app)
+--------------------
+- lib/models/project_brain.dart — ProjectBrain model with fromJson() and empty().
+- lib/services/gerald_api.dart — getProjectBrain() + initProjectBrain() methods.
+- lib/providers/app_state.dart — Added:
+  - _projectBrain, _brainLoading fields
+  - _loadProjectBrain(name): triggered on setProject() + init() + task complete
+  - refreshProjectBrain() public method
+  - initProjectBrain(name): calls /init-brain, refreshes brain in state
+  - Getters: projectBrain, brainLoading, hasBrain
+- lib/widgets/project_selector.dart — Added:
+  - Green dot on folder icon when brain files present (hasBrain)
+  - Brain viewer button (psychology icon) on each project tile
+  - _BrainSheet (StatefulWidget): draggable sheet showing:
+    * File chips for existing brain files
+    * Full brain content in monospace scroll view
+    * "Init Brain" button when files are missing (calls initProjectBrain)
+    * initDone confirmation state
+
+BRAIN FILES (per project directory)
+------------------------------------
+project_brain.md     — Overview, tech stack, architecture, key files
+roadmap.md           — Current sprint, backlog, done
+current_status.md    — Active work, blockers, next up
+architecture.md      — Structure, data flow, key decisions
+
+Root brain files created for CommuteCoder project (C:\CommuteCoder\):
+  project_brain.md, roadmap.md, current_status.md, architecture.md

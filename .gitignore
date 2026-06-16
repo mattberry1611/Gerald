@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env
+# Claude / local runtime
+.claude/
+clipboard.txt
+command.txt
+gerald_inbox.txt
+gerald_outbox.txt
+gerald_outbox.json
+gerald_result.json
+gerald_status.json
+task_queue.json
+completed_tasks.json
+current_goal.json
+supervisor_state.json
+server_stdout.txt
+# Flutter / build outputs
+**/build/
+**/.dart_tool/
+**/.flutter-plugins
+**/.flutter-plugins-dependencies
+**/android/.gradle/
+**/ios/Pods/
+**/ios/Flutter/ephemeral/
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

@@ -1,0 +1,44 @@
+IMAGE SUPPORT — COMPLETE
+========================
+Date: 2026-06-16
+Version: V1.4
+
+STATUS: Implemented in V1.2; verified in V1.4.
+
+IMPLEMENTATION:
+---------------
+pubspec.yaml:
+  image_picker: ^1.1.0
+  permission_handler: ^11.3.0
+
+File: lib/screens/home_screen.dart
+  _pickImage(context, state):
+    - Shows bottom sheet with Camera + Gallery options
+    - Uses ImagePicker().pickImage(source: source, imageQuality: 85, maxWidth: 1280)
+    - On success: state.addImageMessage(file.path)
+    - On error: SnackBar with error message
+    - Triggered by attach_file icon in utility row (both compact bar + voice section)
+
+File: lib/providers/app_state.dart
+  addImageMessage(imagePath, {caption}):
+    - Adds Message with role='user', imagePath=path
+    - caption optional (defaults to '[Image]')
+    - Logs: 'Image attached: filename.jpg'
+
+File: lib/widgets/message_bubble.dart
+  hasImage = message.imagePath != null
+    - If hasImage: shows Image.file() in ClipRRect(radius: 12)
+    - Shows text caption below image if present
+    - Error widget if file not found (broken image icon)
+    - Bubble padding reduces for image: 6px vs 14px standard
+
+FEATURES:
+---------
+✓ Camera source
+✓ Gallery source
+✓ Preview image in conversation (Message bubble)
+✓ Image attached to Message object (imagePath field)
+✓ Future-ready for AI image analysis (imagePath accessible via Message.imagePath)
+✓ Error handling for missing/broken images
+✓ Works in both Mode A and Mode B
+✓ Caption support for image messages

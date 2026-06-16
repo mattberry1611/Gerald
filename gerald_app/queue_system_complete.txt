@@ -1,0 +1,46 @@
+COMMAND QUEUE SYSTEM — COMPLETE
+================================
+Date: 2026-06-16
+Version: V1.4
+
+STATUS: Core queue was implemented in V1.2; enhanced in V1.4 with
+        TaskStage.queued progress stage and queue count in ActivityLog.
+
+IMPLEMENTATION:
+---------------
+File: lib/providers/app_state.dart
+
+  _commandQueue: List<String>  — FIFO queue of pending prompts
+
+  sendPrompt(prompt):
+    if _isBusy:
+      _commandQueue.add(trimmed)
+      _taskStage = TaskStage.queued  (NEW: shows 5% in progress bar)
+      _log('Queued [N]: ...')        (NEW: queue count in activity log)
+      notifyListeners()
+      return
+    else:
+      _executePrompt(trimmed)
+
+  _processNextInQueue():
+    called from _poll() when status → idle/done after active task
+    called from reject() when task is rejected
+    removes first item from queue, calls _executePrompt()
+    logs remaining count
+
+  queueCount getter → drives status panel badge
+
+File: lib/widgets/status_panel.dart
+  Queue count row: visible when queueCount > 0
+    - Queue icon + "N tasks queued" in amber
+    - Updates live as tasks are processed
+
+BEHAVIOR:
+---------
+✓ Multiple tasks can be submitted (no task overwrite)
+✓ Queue count visible (status panel + activity log)
+✓ Queue entries visible in activity log with [HH:MM:SS] Queued [N]: label
+✓ Sequential processing (one task at a time)
+✓ Queue survives rapid submissions (all pushed to _commandQueue)
+✓ After each task completes, next is auto-dequeued and executed
+✓ Reject also triggers next queue item

@@ -1,0 +1,67 @@
+Gerald V1.4 — Remote APK Build Delivery Planning COMPLETE
+==========================================================
+Date: 2026-06-16
+
+WHAT WAS IMPLEMENTED
+---------------------
+remote_build/build_and_deliver.py — ENHANCED with upload + notification:
+
+  Step 1: flutter build apk --debug (unchanged)
+  Step 2: Copy APK to apk_serve/gerald-latest.apk (unchanged)
+  Step 3: Write apk_manifest.json with version, hash, size, download_url (unchanged)
+  Step 4 (NEW): Upload APK to cloud bridge via POST /apk-upload
+  Step 5 (NEW): Notify Matt via POST /notify or local pending_notification.json
+
+  New functions:
+    upload_apk_to_cloud(apk_path, cloud_url, token)
+      — HTTP POST raw APK bytes to {cloud_url}/apk-upload
+      — Bearer token auth for cloud security
+      — Returns {"ok": True, "download_url": "..."}
+    notify_matt_via_bridge(manifest, bridge_url, token)
+      — POST /notify with title, body, and APK metadata
+      — Bridge queues it and forwards to FCM (when configured)
+    write_local_notification(manifest)
+      — Writes pending_notification.json for local polling fallback
+
+  CLI flags:
+    --cloud-url http://my-vps:8000   — enables upload + cloud download URL
+    --token BEARER_TOKEN             — auth for cloud endpoints
+    --notify                         — always send notification (even local-only)
+
+  Usage examples:
+    python remote_build/build_and_deliver.py                       (LAN only)
+    python remote_build/build_and_deliver.py --notify              (LAN + local notif)
+    python remote_build/build_and_deliver.py --cloud-url https://gerald.mattberry.dev --token abc123
+
+gerald_bridge.py — new endpoints supporting remote delivery:
+  POST /apk-upload           — receives raw APK from build_and_deliver.py
+                               stores at apk_serve/gerald-latest.apk
+                               regenerates apk_manifest.json
+  POST /notify               — queues push notification
+                               attempts FCM if service account present
+  GET  /pending-notification — Flutter app polls for waiting notifications
+  POST /clear-notification   — Flutter app dismisses after display
+
+DELIVERY FLOW
+--------------
+  LOCAL (LAN only):
+    1. build_and_deliver.py → flutter build apk
+    2. APK copied to apk_serve/gerald-latest.apk
+    3. Manifest written to apk_manifest.json
+    4. Gerald app polls GET /apk-status every 5 min
+    5. New hash detected → shows "New build available" notification
+    6. Tap → GET /apk-latest/download → browser → Android installs APK
+
+  CLOUD (anywhere):
+    1. build_and_deliver.py --cloud-url https://gerald.mattberry.dev --notify
+    2. APK uploaded to cloud bridge → stored + manifest updated
+    3. POST /notify → cloud bridge → FCM → Matt's phone (instant push)
+    4. Tap notification → HTTPS download link → Android installs APK
+
+REMAINING WORK
+--------------
+  - Flutter ApkDeliveryService (background polling + notification on new hash) — V1.5
+  - Enable Unknown Sources on Matt's Android device (one-time setup)
+  - Real FCM delivery from cloud (requires firebase-service-account.json on VPS)
+  - APK versioning: auto-increment build number after each successful delivery (V1.5)
+  - Signed release APK instead of debug for production distribution (V2.0)

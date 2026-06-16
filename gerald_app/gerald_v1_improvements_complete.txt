@@ -1,0 +1,92 @@
+Gerald Flutter App V1 — Improvements Complete
+==============================================
+Date: 2026-06-15
+Status: All three issues resolved, flutter analyze clean (0 issues)
+
+FILES MODIFIED
+--------------
+pubspec.yaml
+  - Added: image_picker ^1.1.0 (resolved to 1.2.2)
+
+android/app/src/main/AndroidManifest.xml
+  - Added: android.permission.CAMERA
+  - Added: android.permission.READ_MEDIA_IMAGES (API 33+)
+  - Added: android.permission.READ_EXTERNAL_STORAGE maxSdkVersion="32" (legacy)
+
+lib/providers/app_state.dart
+  - Message class: added optional `imagePath` field
+  - AppState: added `_commandQueue` (List<String>), `queueCount` getter, `_isBusy` getter
+  - sendPrompt(): queues command if busy, executes immediately if idle
+  - Added _executePrompt(): extracted prompt execution logic
+  - Added _processNextInQueue(): dequeues and executes next command after task completes
+  - addImageMessage(): creates user message with local image path attached
+  - reject(): now calls _processNextInQueue() after rejection
+  - _poll(): calls _processNextInQueue() after executing → idle transition
+  - clearMessages(): also clears the command queue
+  - _addMessage(): updated signature to accept optional imagePath
+
+lib/screens/home_screen.dart
+  - Import added: image_picker
+  - resizeToAvoidBottomInset: true set explicitly on Scaffold
+  - Bottom bar padding: now dynamic — uses MediaQuery.viewInsets.bottom to detect
+    keyboard; shrinks bottom padding to 6px when keyboard visible (was hard-coded 20px
+    which caused ~20px RenderFlex overflow)
+  - ActivityLog: hidden when keyboard is visible to conserve layout space
+  - Added image picker button (paperclip icon) to bottom bar
+  - Added _pickImage(): shows bottom sheet (Camera / Gallery), calls
+    ImagePicker.pickImage(), passes result to state.addImageMessage()
+  - Horizontal padding reduced from 24 to 16 to fit 4 buttons in bottom row
+
+lib/widgets/message_bubble.dart
+  - Import added: dart:io (for File)
+  - Added _buildImage(): displays local image file with ClipRRect + error fallback
+  - Bubble now shows image above text content when imagePath is present
+  - "[Image]" caption is suppressed when imagePath is set (image-only messages)
+  - Bubble padding adjusts for image layout
+
+lib/widgets/status_panel.dart
+  - Queue count badge: shows "N task(s) queued" in amber when queueCount > 0
+
+lib/widgets/push_to_talk_button.dart
+  - Fixed pre-existing deprecation: listenFor/pauseFor migrated to SpeechListenOptions
+
+README_GERALD_APP.md
+  - Updated usage steps (image picker, queue)
+  - Updated app structure table (image preview, queue)
+  - Added "Command queue" section explaining behaviour
+  - Added "Image attachment" section explaining V1 scope
+  - Added image picker troubleshooting row
+
+FEATURES ADDED
+--------------
+1. BOTTOM OVERFLOW FIX
+   - Root cause: hard-coded 20px bottom padding in bottom bar → RenderFlex overflow
+     when Android keyboard is visible (keyboard shrinks body, 20px wasted)
+   - Fix: padding is now dynamic via MediaQuery.viewInsets.bottom
+   - ActivityLog hides when keyboard is up to give more room to conversation list
+
+2. COMMAND QUEUE SYSTEM
+   - New commands sent while Gerald is busy are queued (not dropped)
+   - Queue drains automatically: next task starts when current completes or is rejected
+   - Status panel shows amber "N tasks queued" indicator
+   - Activity log entries: "Queued [N]: ...", "Processing queued task (N remaining)"
+   - Queue is cleared on conversation clear
+
+3. IMAGE UPLOAD SUPPORT (V1)
+   - Paperclip button in bottom bar opens Camera / Gallery picker
+   - Selected image displayed in conversation thread as a preview
+   - Message stores local imagePath for future backend upload
+   - Image quality capped at 85% / 1280px wide to reduce file size
+   - Error fallback shown if image file is missing/unreadable
+   - Backend upload NOT yet implemented (V1 scope: select + preview only)
+
+REMAINING ISSUES / FUTURE WORK
+-------------------------------
+- Image upload to gerald_bridge.py backend not yet implemented
+  (V2: POST multipart/form-data to a new /upload endpoint)
+- FCM push notifications still stubbed (see README push notifications section)
+- /ask vs /start endpoint mismatch: gerald_bridge.py uses /ask; app uses /start
+  (add /start alias to gerald_bridge.py or update gerald_api.dart)
+- ActivityLog is hidden when keyboard is up; consider a collapsible/scrollable
+  alternative if users need log access while typing
+- SpeechListenOptions.pauseFor migration validated; no functional change

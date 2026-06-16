@@ -1,0 +1,57 @@
+TASK PROGRESS SYSTEM — COMPLETE
+================================
+Date: 2026-06-16
+Version: V1.4
+
+IMPLEMENTATION:
+---------------
+File: lib/providers/app_state.dart
+  NEW: TaskStage enum
+    none, queued, sending, accepted, working, reviewing, finalising, complete, error
+
+  NEW fields:
+    _taskStage: TaskStage
+    _taskStartTime: DateTime?
+    _completeTimer: Timer?
+    _elapsedTimer: Timer? (1s periodic, notifies listeners for live elapsed)
+
+  NEW getters:
+    taskStage, taskProgress (0-100), taskStageName, taskElapsed, hasActiveTask, isLongTask
+
+  Stage transitions:
+    sendPrompt() → queue:        stage = queued (5%)
+    _executePrompt() start:      stage = sending (15%), startTime = now, start 1s timer
+    POST /start returns ok:      stage = accepted (25%)
+    _poll() sees executing:      stage = working (45%)
+    _poll() sees awaiting:       stage = reviewing (75%)
+    _readResult() entry:         stage = finalising (90%)
+    result displayed:            stage = complete (100%), reset after 3s
+    any error:                   stage = error, reset after 5s
+
+  Long task warning:
+    isLongTask = taskStartTime != null && elapsed.inSeconds > 120
+
+File: lib/widgets/status_panel.dart
+  NEW: _TaskProgressSection widget (shown when hasActiveTask)
+    - LinearProgressIndicator (3px height, rounded corners)
+    - Colored: blue (normal), green (complete), red (error)
+    - Stage dot + stage label + percentage
+    - Elapsed time (right-aligned, monospace)
+    - Long task warning row (amber, clock icon, after 120s)
+
+STAGES:
+-------
+Queued ............... 5%
+Sending ............. 15%
+Accepted ............ 25%
+Claude Working ...... 45%
+Reviewing ........... 75%
+Finalising .......... 90%
+Complete ........... 100%
+
+✓ Progress bar
+✓ Current stage label
+✓ Elapsed timer (updates every 1 second)
+✓ Long task warning (after 120 seconds)
+✓ Error state (red bar + "Error" label)
+✓ Auto-resets after task completion

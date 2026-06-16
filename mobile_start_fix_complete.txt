@@ -1,0 +1,34 @@
+mobile_start_fix_complete.txt
+Generated: 2026-06-15
+
+CHANGE: POST /start now accepts task text from multiple JSON fields
+FILE: C:\CommuteCoder\gerald_bridge.py
+
+PROBLEM
+-------
+The mobile app sends POST /start and gets 200 OK, but the task file is never
+created. Root cause: /start only read payload["text"]; if the app sends the
+field as "prompt", "message", "command", "input", or "task" the value was
+silently discarded and the endpoint returned ok:false (or ok:true with no work
+done if the old code path was reached).
+
+FIX
+---
+/start now iterates this priority list and uses the first non-empty string:
+  text, prompt, message, command, input, task
+
+Additional changes:
+- Full received payload is printed to console on every /start call
+- If no text field is found, response is {ok:false, error:"No task provided",
+  received_keys:[...]} so the caller can see exactly what keys arrived
+- Claude execution is now dispatched via BackgroundTasks (same pattern as /ask)
+  so the HTTP response returns immediately while Claude works
+- GET /status and GET /read remain unchanged and fully functional
+
+UNCHANGED
+---------
+- Claude subprocess invocation (run_claude)
+- GET /status
+- GET /read
+- /ask, /projects, /register-device, /reject, /send-to-claude-code endpoints
+- Flutter app (not touched)

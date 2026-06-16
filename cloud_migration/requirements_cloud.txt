@@ -1,0 +1,12 @@
+fastapi==0.111.0
+uvicorn[standard]==0.29.0
+httpx==0.27.0
+python-multipart==0.0.9
+# Optional: Anthropic SDK for direct cloud API calls
+# anthropic==0.28.0
+# Optional: OpenAI SDK
+# openai==1.30.0
+# Optional: Google Generative AI
+# google-generativeai==0.7.0
+# Optional: Firebase Admin for FCM
+# firebase-admin==6.5.0

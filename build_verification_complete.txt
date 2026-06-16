@@ -1,0 +1,55 @@
+Gerald V1.4 — Autonomous Build Verification COMPLETE
+====================================================
+Date: 2026-06-16
+
+WHAT WAS IMPLEMENTED
+---------------------
+build_verifier.py — ENHANCED with full autonomous verification sequence:
+
+  Sequence: flutter clean → flutter pub get → flutter build apk --{flavor}
+  Retry loop: up to 2 retries on failure (configurable via MAX_RETRIES)
+  Auto-fix per retry attempt:
+    - dependency errors → runs flutter pub upgrade
+    - Gradle errors → deletes android/.gradle cache to force re-download
+    - Out-of-memory → bumps JVM heap to 4GB in android/gradle.properties
+    - generic → clean retry with no additional fix
+
+  New functions added:
+    run_flutter_clean(project_path)          — runs flutter clean
+    run_flutter_pub_get(project_path)        — runs flutter pub get
+    run_build_verification_sequence(...)     — full clean→pub→build sequence
+    _run_cmd(label, cmd, cwd, timeout)       — generic subprocess runner
+    _classify_error(output)                  — returns error category string
+    _attempt_fix(category, project_path)     — applies targeted fix, returns description
+    _make_result(...)                        — builds structured result dict
+
+  Result dict includes:
+    status, steps[], fixes_applied[], attempts, errors[], warnings[],
+    duration_s, error_count, warning_count, timestamp, project_path, flavor
+
+gerald_bridge.py — UPDATED _run_build_background() to call:
+    build_verifier.run_build_verification_sequence(project_path, flavor)
+  (previously called run_flutter_build directly, skipping clean + pub-get)
+  Status messages now report attempt count and number of fixes tried.
+
+Flutter services already implemented in prior V1.4 phases:
+  lib/services/build_verification_service.dart — polls /build-status
+  lib/providers/app_state.dart — triggerBuildVerification(), pollBuildResult()
+  lib/screens/settings_screen.dart — Build Verification section with BUILD button
+
+NOTE on "flutter run":
+  flutter run requires an attached device/emulator and is interactive.
+  In autonomous/headless mode, flutter build apk --debug is the correct proxy.
+  The sequence (clean → pub get → build apk) fully verifies compilation and
+  dependency resolution without needing a physical device.
+
+ENDPOINTS
+----------
+  POST /build-verify   — triggers verification sequence (background, non-blocking)
+  GET  /build-status   — returns full result: steps[], fixes_applied[], attempts
+
+REMAINING WORK
+--------------
+  - Auto-trigger verification after each Claude edit (V1.5)
+  - Flutter UI: show per-step progress during build (V1.5)
+  - flutter run smoke test on emulator for runtime verification (V2.0)

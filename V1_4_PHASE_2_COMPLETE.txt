@@ -1,0 +1,56 @@
+V1.4 PHASE 2 — COMPLETE
+=======================
+Date: 2026-06-16
+Version: Gerald App V1.4
+
+BUILD STATUS: ✓ flutter build apk --debug — SUCCEEDED
+              ✓ app-debug.apk generated
+
+FEATURES IMPLEMENTED:
+---------------------
+
+1. IMAGE SUPPORT ✓
+   File: lib/screens/home_screen.dart  — _pickImage (camera + gallery bottom sheet)
+   File: lib/providers/app_state.dart  — addImageMessage(imagePath, {caption})
+   File: lib/widgets/message_bubble.dart — _buildImage (Image.file in ClipRRect,
+          error widget, reduced padding for image bubbles)
+   Packages: image_picker ^1.1.0, permission_handler ^11.3.0
+   See: gerald_app/image_support_complete.txt
+
+2. CONVERSATION ORB ✓
+   File: lib/widgets/conversation_orb.dart (NEW)
+          OrbState enum (idle/listening/thinking/speaking)
+          ConversationOrb StatefulWidget
+          20-particle 3D orbital system (depth-sorted)
+          _OrbPainter CustomPainter (ambient glow, wave rings, core sphere, specular)
+          State-driven speed/color/wave animations
+   File: lib/widgets/push_to_talk_button.dart — _buildOrbView() routes to
+          ConversationOrb when conversationMode=true
+   See: gerald_app/conversation_orb_complete.txt
+
+3. UI OVERFLOW FIXES ✓
+   File: lib/screens/home_screen.dart
+     - SafeArea(bottom: false) on body
+     - _BottomSection: hides ActivityLog when screenH < 620 or textInput open
+     - _ModeSelector compact flag: 36px / 9pt / 'MODE A'/'MODE B' on small screens
+     - _VoiceSection adaptive padding (10px vs 14px)
+     - _EmptyState wrapped in SingleChildScrollView
+     - Keyboard: switches to _CompactBar (4 icon buttons) to prevent overflow
+   File: lib/widgets/push_to_talk_button.dart
+     - PTT circle: 106→84px, glow 130→106px, icon 46→36px when screenH < 620
+   See: gerald_app/ui_stability_complete.txt
+
+INDIVIDUAL COMPLETION FILES:
+-----------------------------
+  gerald_app/image_support_complete.txt     ✓
+  gerald_app/conversation_orb_complete.txt  ✓
+  gerald_app/ui_stability_complete.txt      ✓
+
+WARNINGS (pre-existing, non-blocking):
+---------------------------------------
+  - Kotlin Gradle Plugin deprecation warning (flutter_tts, speech_to_text plugins)
+  - 84 info-level Dart lint hints (no errors)
+
+NOT STARTED (future phases):
+-----------------------------
+  - No other V1.4 tasks begun per instructions

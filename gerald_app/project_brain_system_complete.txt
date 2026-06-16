@@ -1,0 +1,50 @@
+PROJECT BRAIN SYSTEM — COMPLETE
+================================
+Date: 2026-06-16
+Version: V1.4
+
+PURPOSE:
+--------
+Allow Gerald to understand projects without relying on conversation history.
+Before making changes, read these files to understand context, decisions, and state.
+
+FILES CREATED:
+--------------
+C:\CommuteCoder\gerald_app\project_brain.md
+  - Project identity and purpose
+  - Current version + capabilities
+  - Backend API endpoint table
+  - Decision log with dates
+  - Key constraints
+
+C:\CommuteCoder\gerald_app\roadmap.md
+  - Completed milestones (V1.0 → V1.4) with checked items
+  - Planned milestones (V1.5 → V3.0) with unchecked items
+  - Dates and context for each version
+
+C:\CommuteCoder\gerald_app\current_status.md
+  - Date, version, build target
+  - Feature status table (✅/⬜ per feature)
+  - Active issues section
+  - Setup instructions
+  - File location table
+
+C:\CommuteCoder\gerald_app\architecture.md
+  - ASCII system diagram (App → Bridge → Claude)
+  - State machine diagrams (GeraldStatus + TaskStage)
+  - Data flow for sending a prompt
+  - Widget tree
+  - Key design decisions with rationale
+
+USAGE PROTOCOL:
+---------------
+Before making changes to gerald_app, read:
+  1. project_brain.md  — what is this, what can it do?
+  2. current_status.md — what's the current state?
+  3. architecture.md   — where are things, how do they connect?
+  4. roadmap.md        — what's planned next?
+
+After major changes, update:
+  - project_brain.md  (decision log)
+  - roadmap.md        (completed/planned items)
+  - current_status.md (feature status table + active issues)

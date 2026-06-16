@@ -1,0 +1,47 @@
+V1.4 Phase 3A Complete
+=======================
+Date: 2026-06-16
+Milestone: Project Brain System
+
+Phase 3A delivers the Project Brain documentation and injection system
+for the Gerald App (Flutter) and gerald_bridge.py (FastAPI backend).
+
+WHAT WAS DELIVERED
+------------------
+- Four brain files per project:
+    project_brain.md    — identity, features, decisions, limitations
+    roadmap.md          — version history + future milestones
+    current_status.md   — live working state + active issues
+    architecture.md     — structure, data flow, design decisions
+
+- Backend (gerald_bridge.py):
+    read_brain_files()              — reads all four files before each task
+    create_brain_files()            — writes stubs if files are missing
+    build_prompt() with brain       — injects brain context into Claude prompt
+    GET  /project-brain/{name}      — returns brain content to Flutter app
+    POST /init-brain/{name}         — manual brain initialization endpoint
+
+- Flutter (gerald_app):
+    BrainSheet                      — bottom sheet listing brain file previews
+    ProjectBrainScreen              — full-screen brain file viewer
+    "Init Brain" button             — creates stubs for projects with missing files
+    GeraldApi.fetchProjectBrain()   — HTTP call to /project-brain/{name}
+    GeraldApi.initBrain()           — HTTP call to /init-brain/{name}
+
+PATHS
+-----
+Flutter app:   C:\CommuteCoder\gerald_app\
+Backend:       C:\CommuteCoder\gerald_bridge.py
+Brain files:   <project_dir>\project_brain.md (etc.)
+
+BUILD STATUS
+------------
+flutter build apk --debug  →  CLEAN (0 errors, 0 warnings)
+flutter analyze            →  0 errors (101 pre-existing info hints)
+
+NEXT MILESTONE
+--------------
+Phase 3B — Automatic Project Creation
+  POST /create-project endpoint
+  Flutter "Create Project" form
+  Voice command: "create project X"

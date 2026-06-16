@@ -1,0 +1,73 @@
+Gerald V1.4 — Multi-AI Provider Framework COMPLETE
+====================================================
+Date: 2026-06-16
+
+WHAT WAS IMPLEMENTED
+---------------------
+multi_ai_router.py — ENHANCED with real API integrations:
+
+  Providers:
+    claude  — Claude Code via claude.ps1 CLI (active, no API key needed)
+    openai  — GPT-4o via OpenAI REST API (requires OPENAI_API_KEY)
+    gemini  — Gemini 2.0 Flash via Google REST API (requires GOOGLE_API_KEY)
+
+  Implementation approach:
+    Uses Python stdlib urllib.request (no third-party packages required)
+    OpenAI: POST https://api.openai.com/v1/chat/completions
+      model=gpt-4o, temperature=0.2, max_tokens=2000
+      System prompt includes project path context
+      Returns output, model, tokens_used
+    Gemini: POST https://generativelanguage.googleapis.com/v1beta/models/
+              gemini-2.0-flash:generateContent?key={api_key}
+      temperature=0.2, maxOutputTokens=2000
+      Returns output, model
+    Both handle: HTTP errors (401, 429, 5xx), timeouts, JSON parse errors
+
+  Status system:
+    'active'       — Claude Code (always ready, no key needed)
+    'needs_api_key' — OpenAI/Gemini when no key is set
+    'active'       — OpenAI/Gemini once an API key is stored
+    Status refreshes automatically on load_config() and set_api_key()
+
+  Config persistence (ai_provider_config.json):
+    active_provider: str
+    api_keys: {openai: str, gemini: str}
+    Keys stored locally; never logged
+
+  New/changed functions:
+    _run_openai(task_text, project_path)    — real GPT-4o API call
+    _run_gemini(task_text, project_path)    — real Gemini 2.0 Flash API call
+    _refresh_provider_statuses()            — updates PROVIDER_REGISTRY badges
+    set_api_key(provider_id, api_key)       — now also refreshes statuses
+
+Flutter service (lib/services/ai_provider_service.dart):
+  Already implemented in prior V1.4 phases:
+  AiProvider enum (claude/openai/gemini)
+  AiProviderInfo model, kAiProviders list
+  AiProviderService.syncToBackend() → POST /set-provider
+  AiProviderService.fetchActiveProviderFromBackend() → GET /provider-status
+
+ENDPOINTS
+----------
+  GET  /provider-status          — returns active_provider + full providers[]
+  POST /set-provider {provider, api_key}  — switches provider, stores key
+
+HOW TO USE
+-----------
+  1. In Gerald app → Settings → AI Provider
+  2. Tap OpenAI or Gemini
+  3. Enter API key in the text field
+  4. Tap Save — key is sent to backend via /set-provider
+  5. All subsequent /start tasks route to the selected provider
+
+  Or via curl:
+    curl -X POST http://localhost:8000/set-provider \
+      -H "Content-Type: application/json" \
+      -d '{"provider": "openai", "api_key": "sk-..."}'
+
+REMAINING WORK
+--------------
+  - Full autonomous code editing via OpenAI/Gemini (requires file I/O tools - V2.0)
+  - Provider fallback: auto-switch to Claude if OpenAI/Gemini returns error (V1.5)
+  - Token usage tracking and cost display in UI (V2.0)
+  - Streaming responses for faster UI updates (V2.0)

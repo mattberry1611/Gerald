@@ -1,0 +1,198 @@
+GERALD FLUTTER APP V1 — BUILD COMPLETE
+=======================================
+Date:    2026-06-15
+Builder: Claude Code
+Location: C:\CommuteCoder\gerald_app\
+
+
+FILES CREATED (24 total)
+─────────────────────────────────────────────────────────────────
+
+ROOT
+  pubspec.yaml              Flutter project config; name=gerald_app, version=1.0.0+1
+  analysis_options.yaml     Linter config (flutter_lints)
+  README_GERALD_APP.md      How-to-run guide, backend API table, push notification
+                            wiring instructions, troubleshooting table
+
+DART SOURCE  lib/
+  main.dart                 App entry: initialises notifications, mounts Provider,
+                            starts MaterialApp with geraldDarkTheme
+  theme.dart                Dark colour palette (12 tokens), MaterialApp ThemeData
+
+  providers/app_state.dart  ChangeNotifier state machine:
+                              • messages list + activityLog
+                              • status enum: idle/planning/awaiting/executing/error/offline
+                              • 3-second backend polling loop
+                              • setBaseUrl / setProject persisted to SharedPreferences
+                              • auto-reads /read result when status transitions
+                                executing→idle, fires local notification
+
+  services/gerald_api.dart  HTTP client for the gerald_bridge backend:
+                              POST /start, GET /read, GET /status,
+                              GET /projects, POST /send-to-claude-code, POST /reject
+
+  services/notification_service.dart
+                            flutter_local_notifications wrapper:
+                              • Android channel "gerald_tasks" (high importance)
+                              • showTaskComplete(), showTaskError()
+                              • registerForPushNotifications() stub for future FCM
+
+  screens/home_screen.dart  Main conversation screen:
+                              • AppBar: GERALD title | project chip | settings icon
+                              • StatusPanel (status dot + task label + APPROVE/REJECT)
+                              • Scrollable message list (newest at bottom, reversed)
+                              • ActivityLog panel (timestamped mini-log)
+                              • Conditional TextInputBar (keyboard toggle)
+                              • Bottom bar: keyboard toggle | 120px PTT | clear button
+
+  screens/settings_screen.dart
+                            Settings screen:
+                              • Backend URL text field + Save & Reconnect button
+                              • Status info rows (URL, project, connection, message count)
+                              • Clear conversation & log
+
+  widgets/push_to_talk_button.dart
+                            120px circular PTT button:
+                              • Animated pulse ring when listening
+                              • speech_to_text integration (pauseFor=3s, listenFor=60s)
+                              • HapticFeedback.mediumImpact on press
+                              • Three visual states: idle (green), listening (red),
+                                loading (blue)
+
+  widgets/message_bubble.dart
+                            Chat bubbles:
+                              • User: right-aligned, dark blue
+                              • Gerald: left-aligned, dark green, "Gerald" label
+                              • Code-block detection (``` markers), monospace rendering
+                              • Long-press to reveal timestamp
+
+  widgets/status_panel.dart Status panel with coloured dot, task label text,
+                            inline APPROVE/REJECT buttons when awaiting
+
+  widgets/activity_log.dart 96px monospace activity log, newest entry at top,
+                            capped at 50 entries
+
+  widgets/project_selector.dart
+                            Header chip → bottom-sheet project picker;
+                            fetches GET /projects, falls back to
+                            [RentMe, PlantBrain, CommuteCoder]
+
+  widgets/text_input_bar.dart
+                            Multi-line text fallback, auto-focuses on show,
+                            send on Enter or send button
+
+ANDROID  android/
+  app/build.gradle          compileSdk=34, minSdk=21, targetSdk=34,
+                            applicationId=com.matt.gerald
+  app/src/main/AndroidManifest.xml
+                            Permissions: INTERNET, RECORD_AUDIO, POST_NOTIFICATIONS,
+                            RECEIVE_BOOT_COMPLETED, VIBRATE
+                            usesCleartextTraffic=true (required for LAN HTTP)
+  app/src/main/kotlin/.../MainActivity.kt   FlutterActivity subclass
+  app/src/main/res/values/styles.xml        LaunchTheme (black) + NormalTheme
+  build.gradle              Root Gradle: AGP 8.1.4, Kotlin 1.9.10
+  settings.gradle           Includes :app, loads flutter plugin loader
+  gradle.properties         AndroidX + Jetifier enabled
+  gradle/wrapper/gradle-wrapper.properties  Gradle 8.3-all
+
+
+FEATURES IMPLEMENTED
+─────────────────────────────────────────────────────────────────
+
+  [x] App name: Gerald
+  [x] Android first (minSdk 21)
+  [x] Dark theme (custom MaterialTheme, 12 colour tokens)
+  [x] Home / conversation screen
+  [x] Large push-to-talk button (120px, animated pulse, haptic)
+  [x] Text input fallback (keyboard toggle)
+  [x] Project selector (header chip → bottom sheet, persisted)
+  [x] Current task / status panel (with inline approve/reject)
+  [x] Gerald output panel (scrollable chat bubbles, code block rendering)
+  [x] Activity log (timestamped, 50-entry rolling window)
+  [x] Backend URL setting (default http://127.0.0.1:8000, persisted)
+  [x] POST /start to send prompts
+  [x] GET /read to fetch results
+  [x] GET /status polling every 3 seconds
+  [x] Push notification architecture (local notifications on task complete;
+      FCM stub ready for firebase_messaging wiring)
+  [x] Settings screen (URL, status, clear data)
+
+
+HOW TO RUN THE APP
+─────────────────────────────────────────────────────────────────
+
+STEP 1 — Install Flutter (if not already installed):
+  https://docs.flutter.dev/get-started/install/windows
+  Confirm: flutter doctor
+
+STEP 2 — Fetch dependencies:
+  cd C:\CommuteCoder\gerald_app
+  flutter pub get
+
+STEP 3 — Start the backend on your PC:
+  cd C:\CommuteCoder
+  uvicorn gerald_bridge:app --host 0.0.0.0 --port 8000
+
+STEP 4 — Connect Android phone:
+  Enable Developer Options → USB Debugging
+  Plug in via USB
+  flutter devices  (confirm phone appears)
+
+STEP 5 — Run:
+  flutter run
+
+  Or build a debug APK for sideloading:
+  flutter build apk --debug
+  APK: build\app\outputs\flutter-apk\app-debug.apk
+
+STEP 6 — First time on phone:
+  Open Settings → change URL to http://192.168.1.XXX:8000
+  (your PC's LAN IP — find with ipconfig on Windows)
+  Tap Save & Reconnect
+  Status dot should go from red → grey (idle)
+
+
+REMAINING WORK BEFORE TOMORROW MORNING VOICE-DRIVING USE
+─────────────────────────────────────────────────────────────────
+
+1. INSTALL FLUTTER (if not already)
+   Run: flutter doctor
+   Resolve any Android SDK / toolchain issues shown
+
+2. flutter pub get
+   Fetches all 7 dependencies (http, provider, shared_preferences,
+   speech_to_text, flutter_local_notifications, permission_handler, intl)
+
+3. CONFIRM BACKEND ENDPOINTS
+   The app uses POST /start and GET /read as instructed.
+   gerald_bridge.py currently has POST /ask (not /start).
+   Either:
+     a) Add /start alias to gerald_bridge.py (recommended, 5 lines), or
+     b) Change baseUrl calls in gerald_api.dart to /ask and /status
+
+4. GRANT MIC PERMISSION ON PHONE
+   Android will prompt on first PTT press.
+   Grant "Allow while using app".
+
+5. SET LAN IP IN SETTINGS
+   In the app: Settings → Backend URL → http://192.168.1.XXX:8000
+
+6. TEST END-TO-END
+   a) Start backend on PC
+   b) Open Gerald on phone → status should show IDLE not OFFLINE
+   c) Press PTT, say "what is the status of RentMe"
+   d) Confirm message appears and Gerald responds
+
+7. OPTIONAL — WIRE send-to-claude-code TO DESKTOP CONTROLLER
+   Currently POST /send-to-claude-code on gerald_bridge.py logs approval
+   but doesn't inject into the live Claude Code terminal.
+   Wire it to claude_desktop_controller.py::send_to_claude_code().
+
+8. OPTIONAL — PRODUCTION PUSH NOTIFICATIONS (FCM)
+   See README_GERALD_APP.md "Push notifications" section for full steps.
+   V1 local notifications work without this.
+
+NOTE ON EXISTING gerald-app (React Native / Expo):
+  The previous React Native app remains at C:\CommuteCoder\gerald-app\.
+  The new Flutter app is at C:\CommuteCoder\gerald_app\ (with underscore).
+  Both can coexist. Flutter is the canonical V1 going forward.

@@ -1,0 +1,129 @@
+COMMUTECODER PROJECT SUMMARY
+============================
+Date: 2026-06-15
+
+PURPOSE
+-------
+CommuteCoder is Matt's voice-driven coding assistant. Matt speaks tasks by
+voice during his commute; Gerald (the bridge) routes them to Claude Code;
+Claude executes them autonomously and reports back.
+
+
+WHAT GERALD CAN CURRENTLY DO
+-----------------------------
+gerald_bridge.py (FastAPI — the current/final bridge):
+
+  - Accept coding tasks via HTTP POST /start with JSON payload {text: "..."}
+  - Wrap the task in a scoped system prompt (rules: work only in CommuteCoder,
+    no permission prompts, summarise what changed)
+  - Invoke Claude Code headlessly:
+      claude.ps1 --dangerously-skip-permissions -p <prompt>
+    via a PowerShell subprocess, with a 15-minute timeout
+  - Write live status to gerald_status.json  (idle / working / done / error)
+  - Write full structured output to gerald_outbox.json
+    (task, status, returncode, stdout, stderr, timestamp)
+  - Serve a basic web UI at / with a text input, Send button, and Read button
+  - Expose a /read endpoint that returns the latest outbox JSON
+
+claude_desktop_controller.py (built, not yet wired to the bridge):
+
+  - Enumerate all visible Windows windows via Win32 EnumWindows
+  - Identify the Claude Code terminal using psutil process scanning, title
+    keyword scoring, and parent-PID matching against node.exe processes
+  - Focus the identified window using the AttachThreadInput Win32 trick
+  - Inject a message via pyperclip clipboard paste + pyautogui keystrokes
+    (Ctrl+C to cancel, Ctrl+U to clear line, Ctrl+V to paste, Enter to submit)
+
+claude_bridge.py (older/legacy bridge — NOT the active one):
+
+  - Voice capture via Web Speech API (browser-side, en-AU locale)
+  - HTTP GET /ask?prompt= routes transcript to Claude via claude.cmd
+  - Hardcoded to RentMe project; no status file; no output persistence
+  - Considered legacy; kept for reference
+
+
+WHAT CLAUDE CAN CURRENTLY DO
+-----------------------------
+When invoked by Gerald (headless, --dangerously-skip-permissions):
+
+  - Accept any task description as a plain-text prompt via the -p flag
+  - Work autonomously inside a declared project directory without pausing
+    for per-file permission prompts
+  - Create, read, and edit files with no manual approval required per step
+  - Perform multi-step plans within a single invocation (plan → build → review)
+  - Self-review work and produce structured approval artifacts
+  - Summarise results concisely at the end of each task
+
+
+WHAT HAS BEEN PROVEN TONIGHT
+-----------------------------
+All of the following were validated on 2026-06-15:
+
+  1. End-to-end pipeline confirmed working.
+     final_bridge_test.txt was created by an early test run, containing
+     "FINAL BRIDGE WORKING" — proving Gerald → Claude subprocess → file output.
+
+  2. Complex autonomous multi-step goal completed without human intervention.
+     Task dispatched via /start:
+       "Create a CommuteCoder home screen prototype. Tasks: 1. Create
+        home_screen_plan.txt 2. Review and approve plan 3. Create
+        home_screen_layout.txt 4. Review layout 5. If acceptable create
+        home_screen_prototype_approved.txt"
+     Claude created all five deliverables, self-reviewed, and self-approved.
+     Results are in gerald_outbox.json (returncode 0, full output captured).
+
+  3. Status and output persistence work.
+     gerald_status.json updates through idle → working → done.
+     gerald_outbox.json captures structured output for the UI to read back.
+
+  4. Self-review and approval model proven.
+     home_screen_prototype_approved.txt contains a pass/fail checklist of
+     14 review criteria across plan and layout; all passed.
+
+  5. --dangerously-skip-permissions enables fully unattended operation.
+     Claude completed all file edits without surfacing any permission dialogs.
+
+
+WHAT REMAINS TO BE BUILT
+-------------------------
+Before CommuteCoder achieves full voice-driven autonomous app creation:
+
+  1. VOICE INPUT IN THE UI
+     The current gerald_bridge.py UI is text-input only.
+     The Web Speech API (proven in claude_bridge.py legacy) must be ported
+     to the FastAPI bridge's HTML so Matt can speak tasks hands-free.
+
+  2. HOME SCREEN HTML
+     home_screen_plan.txt and home_screen_layout.txt are blueprints only.
+     index.html has not been built. The approved design calls for:
+       - Status bar, mic button, project panel, Claude output panel,
+         activity log
+       - Dark VS Code theme with 14 colour tokens
+       - Spacebar shortcut to trigger mic
+       - Mobile-optimised layout for one-handed commute use
+
+  3. MULTI-PROJECT ROUTING
+     The current bridge hardcodes C:\CommuteCoder as the working directory.
+     Keyword-based project detection (to route tasks to RentMe, PlantBrain,
+     or other projects based on voice transcript content) is not implemented.
+
+  4. DESKTOP INJECTION WIRED TO THE BRIDGE
+     claude_desktop_controller.py is built and scored-window detection works,
+     but there is no /send-to-claude-code endpoint in gerald_bridge.py.
+     Wiring this up would allow Gerald to inject follow-up messages into an
+     already-running Claude Code session without starting a new subprocess.
+
+  5. SUPERVISOR / TASK-QUEUE LOOP
+     supervisor_state.json and task_queue.json exist (suggesting this was
+     planned), but the multi-task dispatcher polling loop is not in
+     gerald_bridge.py. A /start-goal endpoint that dispatches a list of
+     tasks one at a time, polling status between each, would complete this.
+
+  6. RESULT DISPLAY IN THE UI
+     The current UI shows a raw /read output dump. The approved home screen
+     design includes a proper formatted Claude output panel and a scrolling
+     activity log showing task history.
+
+  7. MOBILE / COMMUTE HARDENING
+     High-contrast colours, large touch targets, and one-handed layout are
+     specified in home_screen_prototype_approved.txt but not yet implemented.

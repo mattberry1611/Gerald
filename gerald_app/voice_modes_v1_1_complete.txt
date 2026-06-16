@@ -1,0 +1,111 @@
+Gerald Flutter App — Voice Modes V1.1 Complete
+===============================================
+Date: 2026-06-15
+
+FILES MODIFIED
+--------------
+pubspec.yaml
+  - Added: flutter_tts: ^4.0.0
+
+lib/main.dart
+  - Added TtsService import
+  - Added: await TtsService.instance.init() in main()
+
+lib/services/tts_service.dart  [NEW]
+  - Singleton TtsService wrapping flutter_tts FlutterTts
+  - speak(text): stops current speech, speaks new text, awaits completion via Completer
+  - stop(): cancels current speech
+  - 120-second timeout guard on speak()
+
+lib/providers/app_state.dart
+  - Added fields: _conversationMode, _ttsEnabled, _resumeListenTick
+  - Added getters: conversationMode, ttsEnabled, resumeListenTick
+  - init(): loads conversationMode + ttsEnabled from SharedPreferences
+  - _readResult(): calls TtsService.speak() when ttsEnabled, then increments
+    resumeListenTick when conversationMode is on (signals widget to re-listen)
+  - setConversationMode(bool): persists, stops TTS when turning off
+  - setTtsEnabled(bool): persists, stops TTS when disabling
+
+lib/widgets/push_to_talk_button.dart
+  - Handles both Mode A (PTT) and Mode B (Conversation) in one widget
+  - Watches state.conversationMode and state.resumeListenTick
+  - Mode A: existing tap-to-start, tap-to-stop, 100x100 green circle
+  - Mode B: 80x80 pulsing ring indicator (LISTENING / PROCESSING / READY labels)
+  - Auto-starts listening when conversationMode becomes true
+  - Cancels listening when conversationMode becomes false
+  - Auto-resumes after response via resumeListenTick signal
+  - On STT timeout with no speech in Mode B: auto-restarts listening
+  - _scheduleStart() guards against double-scheduling with _resumeScheduled flag
+
+lib/screens/home_screen.dart
+  - Redesigned bottom section:
+      _ModeSelectorRow: A PUSH-TO-TALK chip | B CONVERSATION chip | END button (Mode B only)
+      PushToTalkButton (adapts UI per mode)
+      Utility row: keyboard toggle | image attach | clear
+  - Keyboard visible: shows compact bar (utility buttons only) — prevents overflow
+  - _ModeChip: AnimatedContainer with active/inactive states, dark Gerald styling
+  - Removed PTT from utility row (it now has its own row)
+  - _EmptyState: updated text to reflect Mode A / Mode B
+
+lib/screens/settings_screen.dart
+  - Added Voice section with two SwitchListTiles:
+      "Speak Gerald responses" → state.setTtsEnabled()
+      "Conversation Mode" → state.setConversationMode()
+  - Version bumped to Gerald v1.1.0
+
+README_GERALD_APP.md
+  - Added "Voice Modes (V1.1)" section explaining Mode A and Mode B
+  - Added "V2 Roadmap: Locked-Screen / Background Continuous Listening" section
+  - Updated app structure diagram to include tts_service.dart
+  - Updated usage instructions to mention Mode A/B
+
+MODE A BEHAVIOUR
+----------------
+- Chip label: "A  PUSH-TO-TALK" (bottom of main screen)
+- 100x100 green mic circle button
+- Tap to start recording; speech captured until 3-second pause or 60-second max
+- Release / second tap sends the recognized text to the backend
+- No auto-resume — one command at a time
+- Pulsing animation while recording
+- Haptic feedback on tap
+
+MODE B BEHAVIOUR
+----------------
+- Chip label: "B  CONVERSATION" (bottom of main screen)
+- Activate by tapping the B chip; deactivate by tapping A chip or the END button
+- On activate: STT starts listening automatically
+- User speaks; on pause detection (3 seconds of silence), command is sent
+- After backend responds: TTS speaks (if enabled), then STT restarts automatically
+- 80x80 ring indicator shows LISTENING (red pulse) / PROCESSING (blue pulse) / READY (green)
+- STT timeout (60s no speech): auto-restarts listening instead of stopping
+- Persisted to SharedPreferences — remains on between app restarts
+
+TEXT-TO-SPEECH BEHAVIOUR
+-------------------------
+- Package: flutter_tts ^4.0.0 (uses Android on-device TTS engine)
+- Toggle: Settings → Voice → "Speak Gerald responses"
+- Persisted to SharedPreferences
+- Fires for every gerald message received via _readResult()
+- Speaks the full response text with a 120-second timeout guard
+- In Mode B: TTS completes BEFORE listening resumes (speech overlapping is prevented)
+- TTS stopped when disabling the toggle or exiting conversation mode
+
+REMAINING WORK FOR LOCKED-SCREEN CONVERSATION MODE (V2)
+---------------------------------------------------------
+- Android Foreground Service with persistent notification (keeps process alive)
+- FOREGROUND_SERVICE + FOREGROUND_SERVICE_MICROPHONE permissions (Android 14+)
+- Native Kotlin SpeechRecognizer binding (not Flutter plugin) to keep mic active
+- WAKE_LOCK to prevent CPU sleep during background sessions
+- Optional offline wake-word detection (e.g. Vosk) to avoid always-on recording
+- MethodChannel to bridge native recognition events back to Flutter
+- UI for enabling background mode with appropriate permission explanations
+
+BUILD STEPS (no changes required)
+----------------------------------
+flutter clean
+flutter pub get
+flutter run
+
+Note: gerald_bridge.py must be running at the configured backend URL.
+If /start endpoint is missing, add an alias in gerald_bridge.py or
+update the baseUrl path in gerald_api.dart.

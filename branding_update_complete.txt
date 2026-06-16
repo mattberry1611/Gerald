@@ -1,0 +1,67 @@
+GERALD BRANDING UPDATE — COMPLETE
+Date: 2026-06-15
+Source logo: C:\CommuteCoder\branding\gerald_logo_v1.png
+
+=== CHANGES MADE ===
+
+1. APP LAUNCHER ICON (Flutter — canonical app)
+   - gerald_logo_v1.png resized and placed as ic_launcher.png in all Android mipmap densities:
+       mipmap-mdpi    (48x48)
+       mipmap-hdpi    (72x72)
+       mipmap-xhdpi   (96x96)
+       mipmap-xxhdpi  (144x144)
+       mipmap-xxxhdpi (192x192)
+   - gerald_logo.png added to drawable/ for adaptive icon foreground
+   - ic_launcher_foreground.xml updated: now references gerald_logo as bitmap drawable
+   - ic_launcher_background.xml updated: brand dark color #1E1E2E (was #1A73E8 blue)
+   - mipmap-anydpi/ic_launcher.xml fixed: now proper adaptive-icon XML (was wrong shape XML)
+   - mipmap-anydpi-v26/ic_launcher.xml: unchanged (already correct adaptive-icon format)
+   - pubspec.yaml: flutter_launcher_icons ^0.13.1 added as dev dependency with config
+     (run: flutter pub get && flutter pub run flutter_launcher_icons — to regenerate)
+
+2. SPLASH SCREEN (Flutter — canonical app)
+   - Android native splash: drawable/splash_background.xml — logo centered on #121212 background
+   - values/styles.xml: LaunchTheme windowBackground now references splash_background drawable
+   - Flutter Dart splash: lib/screens/splash_screen.dart created
+       * Shows logo (140x140) + "GERALD" text + subtitle with fade-in animation
+       * Auto-navigates to HomeScreen after 2 seconds with fade transition
+   - main.dart: home now shows SplashScreen (was HomeScreen directly)
+
+3. CONVERSATION SCREEN HEADER (Flutter — canonical app)
+   - home_screen.dart: AppBar title updated from plain Text("GERALD") to
+     Row [ Image(gerald_logo.png, 28x28) | SizedBox(10) | Text("GERALD") ]
+   - Logo displayed inline with brand text for visual identity
+
+4. REACT NATIVE APP (gerald-app — superseded but kept consistent)
+   - gerald_logo.png copied to gerald-app/assets/gerald_logo.png
+   - app.json: "icon" and "splash" fields added pointing to gerald_logo.png
+   - index.tsx: header updated to show logo image (22x22) beside "Gerald" text
+     (Image import added; headerLogoSection and headerLogo styles added)
+
+5. BRANDING CONSISTENCY REVIEW
+   - Both apps now use the same gerald_logo_v1.png source
+   - Brand colors consistent: dark surface #1E1E2E / #121212 background / #4CAF82 accent green
+   - Logo appears in: launcher icon, native splash, Flutter splash screen, conversation header
+   - Text "GERALD" retained alongside logo in headers (logo does not fully replace text —
+     removing the text label would harm usability in the header context)
+
+=== FILES CHANGED ===
+gerald_app/assets/gerald_logo.png                                (new — Flutter asset)
+gerald_app/lib/main.dart                                          (splash screen entry point)
+gerald_app/lib/screens/splash_screen.dart                         (new — animated splash widget)
+gerald_app/lib/screens/home_screen.dart                           (logo in AppBar title)
+gerald_app/pubspec.yaml                                           (flutter_launcher_icons config)
+gerald_app/android/app/src/main/res/drawable/gerald_logo.png      (new — source PNG for drawables)
+gerald_app/android/app/src/main/res/drawable/ic_launcher_foreground.xml  (updated to PNG bitmap)
+gerald_app/android/app/src/main/res/drawable/ic_launcher_background.xml  (brand dark bg color)
+gerald_app/android/app/src/main/res/drawable/splash_background.xml       (new — native splash)
+gerald_app/android/app/src/main/res/mipmap-anydpi/ic_launcher.xml        (fixed to adaptive-icon)
+gerald_app/android/app/src/main/res/mipmap-mdpi/ic_launcher.png          (new — 48x48)
+gerald_app/android/app/src/main/res/mipmap-hdpi/ic_launcher.png          (new — 72x72)
+gerald_app/android/app/src/main/res/mipmap-xhdpi/ic_launcher.png         (new — 96x96)
+gerald_app/android/app/src/main/res/mipmap-xxhdpi/ic_launcher.png        (new — 144x144)
+gerald_app/android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png       (new — 192x192)
+gerald_app/android/app/src/main/res/values/styles.xml                    (native splash bg)
+gerald-app/assets/gerald_logo.png                                (new — RN asset)
+gerald-app/app.json                                               (icon + splash config)
+gerald-app/app/index.tsx                                          (logo in header)

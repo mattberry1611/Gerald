@@ -1,0 +1,270 @@
+GERALD APP V1 — IMPLEMENTATION PLAN
+=====================================
+App Name: Gerald
+Purpose: Mobile Android app for open, flowing voice/text conversation with the Gerald AI coding supervisor while driving.
+Date: 2026-06-15
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+1. TECH STACK
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Framework:     React Native (Expo SDK 51+)
+Language:      TypeScript
+Target:        Android first (API 26+, Android 8.0+), iOS later
+Navigation:    Expo Router (file-based)
+State:         Zustand
+HTTP:          Axios
+Voice:         @react-native-voice/voice (Android SpeechRecognizer)
+Notifications: expo-notifications + Firebase Cloud Messaging (FCM)
+Theme:         React Native Paper (dark mode)
+
+Why Expo: Fastest path to a working Android APK. Built-in support for
+notifications, audio, and permissions. EAS Build produces signed APK/AAB
+for sideloading or Play Store without needing a local Android SDK setup.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+2. SCREENS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+2.1 Conversation Screen (Main / Home)
+  - Full-screen chat bubble interface
+  - User messages on the right (dark blue bubble)
+  - Gerald responses on the left (dark green bubble)
+  - Auto-scrolls to the latest message
+  - Header bar shows: "Gerald" title + active project name + status dot
+  - Bottom bar: PTT button (center) + text input toggle (right)
+  - When Gerald returns a plan: Approve and Reject action buttons appear
+    inline in the response bubble
+  - Timestamps shown on long-press of a bubble
+
+2.2 Project Selector (Modal / Drawer)
+  - Triggered by tapping the project name in the header
+  - Lists all projects returned by GET /projects from the Gerald backend
+  - Tap to select; persists selection to AsyncStorage
+  - Shows currently active project with a checkmark
+
+2.3 Settings Screen (accessible from header menu)
+  - Gerald backend base URL (default: http://192.168.x.x:8000)
+  - FCM / push notification toggle
+  - Clear conversation history
+  - App version info
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+3. CORE FEATURES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+3.1 Push-to-Talk Voice Input
+  - Large circular PTT button centered at the bottom of the screen
+  - Press and hold to record; release to send
+  - Visual states:
+      IDLE:       microphone icon, grey ring
+      RECORDING:  animated red pulse ring, "Listening..." label
+      PROCESSING: spinner, "Sending..." label
+  - Uses @react-native-voice/voice which wraps Android's SpeechRecognizer
+  - On release: finalised transcript is sent to Gerald backend as a prompt
+  - If speech recognition fails or returns empty, show a toast: "Didn't catch that — try again"
+  - Requires RECORD_AUDIO permission (requested on first use)
+
+3.2 Text Input Fallback
+  - Tap the keyboard icon to reveal a text input field above the bottom bar
+  - Multiline input, max 4 lines visible (scrollable beyond)
+  - Send button appears when text is present
+  - Dismisses keyboard on send or on PTT press
+  - Input is cleared after send
+
+3.3 Project Selector
+  - Persisted selection survives app restarts (AsyncStorage)
+  - Backend /projects returns list of { name, path } objects
+  - Selected project is sent with every /ask request so Gerald routes
+    the prompt to the correct Claude Code project window
+  - Default to first project if none previously selected
+
+3.4 Send Requests to Gerald Backend
+  - Endpoint: POST /ask
+  - Body: { prompt: string, project: string }
+  - On send:
+      1. Append user message bubble immediately (optimistic)
+      2. Show a "Gerald is thinking..." loading bubble on the left
+      3. Await response
+      4. Replace loading bubble with Gerald's full response
+  - Error handling: if request fails, show error bubble with Retry button
+  - Timeout: 120 seconds (Gerald + Claude can be slow)
+  - Configurable base URL from Settings
+
+3.5 Show Current Task Status
+  - Status dot in the header (colour-coded):
+      ● Grey   = Idle
+      ● Yellow = Planning (Gerald thinking / Claude planning)
+      ● Blue   = Awaiting Approval (plan ready, Approve/Reject shown)
+      ● Green  = Executing (Claude editing code)
+      ● Red    = Error
+  - Polls GET /status every 3 seconds while the app is foregrounded
+  - Status label text also shown below the dot on long-press header tap
+
+3.6 Show Claude/Gerald Output
+  - Gerald responses rendered as chat bubbles on the left
+  - Supports multi-paragraph text with correct line breaks
+  - Code blocks rendered in monospace font with a dark box background
+  - When a plan is presented:
+      - An "APPROVE" button (green) and "REJECT" button (red) appear at
+        the bottom of the Gerald bubble
+      - Approve → POST /send-to-claude-code → status transitions to Executing
+      - Reject  → POST /reject (or sends a follow-up voice/text message)
+  - Long responses are not truncated; full text shown with scroll
+
+3.7 Push Notifications
+  - Uses expo-notifications + FCM
+  - On first launch, app requests notification permission
+  - App registers FCM device token and POSTs it to Gerald backend:
+      POST /register-device { token: string }
+  - Gerald backend stores the token and uses FCM to send a push notification
+    when a task completes or when Gerald needs input while app is closed:
+      Title: "Gerald"
+      Body:  e.g. "Task complete: home_screen_plan.txt approved and built"
+  - Tapping the notification opens the app and scrolls to the latest message
+  - Notifications work when app is backgrounded or killed (FCM data message)
+  - Backend requirement: add FCM send logic using firebase-admin or requests
+    to the FCM v1 API in gerald_bridge.py
+
+3.8 Dark Theme
+  - Background:        #0d0d0d  (near black)
+  - Surface/cards:     #1a1a1a
+  - User bubble:       #1e3a5f  (dark blue)
+  - Gerald bubble:     #0f2b1a  (dark green)
+  - Primary accent:    #00c896  (cyan-green — Gerald brand colour)
+  - Error/reject:      #c0392b
+  - Text primary:      #f0f0f0
+  - Text secondary:    #888888
+  - Status bar:        dark (translucent)
+  - No light mode in V1
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+4. FILE STRUCTURE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+gerald-app/
+├── app/
+│   ├── _layout.tsx              # Root layout: theme provider, nav, FCM init
+│   ├── index.tsx                # Conversation screen (main)
+│   └── settings.tsx             # Settings screen
+├── components/
+│   ├── MessageBubble.tsx        # Chat bubble (user or Gerald)
+│   ├── PushToTalkButton.tsx     # PTT button with recording animation
+│   ├── TextInputBar.tsx         # Text field + send button
+│   ├── ProjectSelectorModal.tsx # Project list modal
+│   ├── StatusIndicator.tsx      # Coloured status dot + label
+│   └── ApproveRejectBar.tsx     # Approve / Reject buttons inside bubble
+├── services/
+│   ├── geraldApi.ts             # All HTTP calls to Gerald backend
+│   ├── notifications.ts         # FCM token registration + permission
+│   └── voice.ts                 # SpeechRecognizer wrapper
+├── store/
+│   └── conversationStore.ts     # Zustand store: messages, status, project
+├── constants/
+│   └── theme.ts                 # Colour tokens, font sizes, spacing
+├── app.json                     # Expo config (name: Gerald, package: com.matt.gerald)
+├── eas.json                     # EAS Build config (Android APK profile)
+└── package.json
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+5. BACKEND CHANGES NEEDED (gerald_bridge.py)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+The existing Gerald backend needs these additions for the mobile app:
+
+  GET  /projects
+    Returns list of registered projects with name and path.
+    Already partially implied by detect_project(); make it an explicit endpoint.
+
+  GET  /status
+    Returns current task state: { status, current_project, last_message }
+    Already exists via gerald_status.json; expose as an endpoint.
+
+  POST /ask
+    Already exists. Add { project } field to body so project is explicit,
+    not inferred from keywords.
+
+  POST /send-to-claude-code
+    Already exists. No change needed.
+
+  POST /register-device
+    New. Accepts { token: string }. Stores FCM token to file or memory.
+
+  POST /send-notification (internal)
+    New helper. Called by Gerald when a task completes. Sends FCM push
+    to all registered tokens via Firebase Admin SDK.
+
+  CORS:
+    Add CORS middleware to allow requests from the mobile app's IP.
+    (fastapi.middleware.cors.CORSMiddleware, allow_origins=["*"] for dev)
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+6. PERMISSIONS (AndroidManifest via Expo)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  RECORD_AUDIO           — push-to-talk voice recognition
+  INTERNET               — backend API calls + FCM
+  RECEIVE_BOOT_COMPLETED — restore FCM registration after reboot
+  POST_NOTIFICATIONS     — Android 13+ push notification permission
+  VIBRATE                — haptic feedback on PTT press/release
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+7. DEVELOPMENT PHASES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Phase 1 — Shell + Theme
+  - Expo project init (TypeScript)
+  - Dark theme constants
+  - Conversation screen layout (static bubbles)
+  - Header with project name placeholder + status dot
+
+Phase 2 — Voice + Text Input
+  - @react-native-voice/voice integration
+  - PTT button component with recording animation
+  - Text input bar toggle
+  - Hook both inputs to send a message (no backend yet — mock response)
+
+Phase 3 — Backend Integration
+  - Axios service layer (geraldApi.ts)
+  - POST /ask on voice/text send
+  - GET /status polling loop
+  - Project selector (GET /projects + modal)
+  - Approve/Reject buttons wired to POST /send-to-claude-code
+
+Phase 4 — Push Notifications
+  - Firebase project setup + google-services.json in app
+  - expo-notifications FCM registration
+  - POST /register-device to Gerald backend
+  - Backend: firebase-admin SDK to send push on task complete
+  - Test notification receipt while app is backgrounded/killed
+
+Phase 5 — Polish + APK
+  - Haptic feedback on PTT press/release
+  - Error states, retry, timeout messages
+  - Code block rendering in bubbles
+  - EAS Build: eas build --platform android --profile preview
+  - Sideload APK onto Matt's phone for driving test
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+8. REQUIREMENTS CHECKLIST
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  [x] 1. App name: Gerald
+  [x] 2. Open flowing conversation screen — full-screen chat bubble UI
+  [x] 3. Push-to-talk voice input — hold PTT button, Android SpeechRecognizer
+  [x] 4. Text input fallback — keyboard icon reveals text field + send
+  [x] 5. Project selector — header tap opens project modal, fetches /projects
+  [x] 6. Send requests to Gerald backend — POST /ask with prompt + project
+  [x] 7. Show current task status — coloured dot, polls GET /status every 3s
+  [x] 8. Show Claude/Gerald output — bubbles with Approve/Reject inline
+  [x] 9. Push notifications — FCM via expo-notifications, backend sends on task complete
+  [x] 10. Dark theme — near-black bg, cyan-green accent, no light mode
+  [x] 11. Android first — Expo targeting Android API 26+, EAS APK build

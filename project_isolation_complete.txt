@@ -1,0 +1,55 @@
+PROJECT ISOLATION — COMPLETE
+=============================
+Date: 2026-06-16
+Phase: V1.4 Phase 3
+
+WHAT WAS BUILT
+--------------
+Every project is completely isolated from others. Claude Code never reads or
+modifies files outside the currently active project directory.
+
+BACKEND (gerald_bridge.py)
+--------------------------
+- get_project_outbox_file(project_name): returns per-project outbox path
+  e.g. C:\CommuteCoder\gerald_outbox_RentMe.json for project "RentMe"
+- write_outbox(data, outbox_file): writes to per-project file AND mirrors
+  to the global gerald_outbox.json so GET /read always works
+- run_claude() builds isolation_block for every Claude prompt:
+  * Lists ALL other project paths as explicitly forbidden
+  * "DO NOT read or modify any files outside {project_path}"
+  * "Explicitly forbidden paths:" with bullet list
+- Per-project outbox means results are namespaced and don't collide
+
+PROMPT ISOLATION BLOCK (injected into every Claude prompt)
+-----------------------------------------------------------
+# Project Isolation
+DO NOT read or modify any files outside {project_path}.
+Explicitly forbidden paths:
+- C:\RentMe
+- C:\PlantBrain
+(etc. — all OTHER projects are listed)
+
+FLUTTER (gerald_app)
+--------------------
+- lib/providers/app_state.dart — _projectMessages map (keyed by project name):
+  Each project has its own message list; switching projects shows only that
+  project's conversation history. Global messages use _kGlobal key.
+- Messages scoped via get messages => _projectMessages[_selectedProject ?? _kGlobal]
+
+ISOLATION GUARANTEES
+---------------------
+1. Claude prompt always specifies the CWD (project_path)
+2. Forbidden paths block access to other projects at AI instruction level
+3. Claude subprocess runs with cwd=project_path
+4. Output stored in per-project outbox (no cross-project contamination)
+5. Flutter messages isolated per project in the UI
+6. Project selection persists across app restarts (SharedPreferences)
+
+FILE SEPARATION
+---------------
+Every project keeps its own:
+  project_brain.md     — brain context (never shared)
+  roadmap.md           — project-specific roadmap
+  current_status.md    — this project's status only
+  architecture.md      — this project's architecture
+  gerald_outbox_{name}.json  — this project's Claude output

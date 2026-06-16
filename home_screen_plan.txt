@@ -1,0 +1,98 @@
+CommuteCoder Home Screen Plan
+==============================
+Date: 2026-06-15
+
+OVERVIEW
+--------
+A single-page voice-driven coding assistant UI served by gerald_bridge.py.
+The layout is a responsive grid with five distinct sections.
+
+LAYOUT (Desktop, 1280px+)
+--------------------------
+
+  +--------------------------------------------------+
+  |  STATUS INDICATOR (top bar, full width)          |
+  +--------------------------------------------------+
+  |                    |                             |
+  |  CURRENT PROJECT   |   CLAUDE OUTPUT PANEL       |
+  |  PANEL (left col)  |   (right col, tall)         |
+  |                    |                             |
+  +--------------------+-----------------------------+
+  |  VOICE INPUT BUTTON (center, prominent)          |
+  +--------------------------------------------------+
+  |  ACTIVITY LOG PANEL (bottom, full width)         |
+  +--------------------------------------------------+
+
+COMPONENTS
+----------
+
+1. VOICE INPUT BUTTON
+   - Large circular microphone button, center-bottom of the main area
+   - States: idle (grey), listening (red pulse animation), processing (spinner)
+   - Uses the Web Speech API (already wired in gerald_bridge.py)
+   - Keyboard shortcut: Spacebar to toggle
+   - Shows live transcript text below the button while listening
+   - "Listening..." label replaces static label during capture
+
+2. CURRENT PROJECT PANEL (left column)
+   - Heading: "Active Project"
+   - Displays the currently detected project name (e.g. "CommuteCoder")
+   - Project path shown in smaller monospace text
+   - Manual project override: dropdown to force a specific project
+   - Badge shows confidence score from detect_project() (e.g. "High Match")
+   - Refresh icon re-runs detect_project() against the last transcript
+
+3. CLAUDE OUTPUT PANEL (right column, tall)
+   - Heading: "Claude's Response"
+   - Scrollable area showing the full plan/response from run_claude_planner()
+   - Monospace font for code blocks; markdown rendered for prose
+   - Two action buttons at the bottom:
+       [Approve & Send]  — calls /send-to-claude-code, injects plan into terminal
+       [Discard]         — clears the panel and resets to idle
+   - Timestamps on each response
+   - Previous response persists until a new one arrives or Discard is pressed
+
+4. ACTIVITY LOG PANEL (bottom, full width)
+   - Heading: "Activity Log"
+   - Scrollable chronological list of recent events:
+       • Voice prompts received (truncated to 80 chars)
+       • Project detection results
+       • Claude plan received
+       • Approval / discard actions
+       • Injection success / failure
+   - Each row: [timestamp] [icon] [message]
+   - Auto-scrolls to bottom on new entry
+   - "Clear Log" button top-right of the panel
+
+5. STATUS INDICATOR (top bar)
+   - Full-width coloured strip across the top
+   - States and colours:
+       IDLE        — neutral grey   — "Gerald is ready"
+       LISTENING   — blue           — "Listening..."
+       PROCESSING  — amber          — "Asking Claude..."
+       APPROVED    — green          — "Task sent to Claude Code"
+       ERROR       — red            — "<error message>"
+   - Shows the current Gerald server URL (e.g. http://localhost:8080)
+   - WebSocket or polling updates status in real time without page refresh
+
+STYLING
+-------
+- Dark theme (background #1e1e1e, text #d4d4d4) to match VS Code / terminal aesthetic
+- Accent colour: electric blue (#3794ff) for interactive elements
+- Font: system-ui for labels; Fira Code / monospace for code/logs
+- Smooth CSS transitions on status-bar colour changes and mic button states
+
+DATA FLOW (for reference, no code yet)
+---------------------------------------
+Voice → Web Speech API → /ask?prompt= → detect_project() → run_claude_planner()
+     → Claude Output Panel + Activity Log
+Approve → /send-to-claude-code → claude_desktop_controller.py → Claude Code terminal
+     → Status: APPROVED → Activity Log entry
+
+REQUIREMENTS CHECKLIST
+-----------------------
+[x] Voice input button
+[x] Current project panel
+[x] Activity log panel
+[x] Claude output panel
+[x] Status indicator

@@ -1,0 +1,39 @@
+version: "3.9"
+
+services:
+  gerald:
+    build:
+      context: ..
+      dockerfile: cloud_migration/Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - GERALD_DATA_DIR=/app/data
+      - GERALD_API_TOKEN=${GERALD_API_TOKEN}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+    volumes:
+      - gerald_data:/app/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - nginx_certs:/etc/letsencrypt
+    depends_on:
+      - gerald
+    restart: unless-stopped
+
+volumes:
+  gerald_data:
+  nginx_certs:

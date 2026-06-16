@@ -1,0 +1,79 @@
+Gerald Flutter App - Android Gradle Fix
+========================================
+Date: 2026-06-15
+Flutter SDK: 3.41.9-stable (D:\Program Files\SDK\flutter_windows_3.41.9-stable\flutter)
+
+ROOT CAUSE
+----------
+Flutter 3.41.9 removed support for the imperative `apply from: app_plugin_loader.gradle`
+approach in settings.gradle. The file now throws an error by design, requiring migration
+to the declarative plugins{} block format.
+
+Additionally, the project's tool versions were below Flutter 3.41.9's hard minimums:
+  - Gradle 8.3 < required 8.7   (errorGradleVersion in DependencyVersionChecker.kt)
+  - AGP   8.1.4 < required 8.6  (errorAGPVersion)
+  - Kotlin 1.9.10 < required 2.0.0 (errorKGPVersion)
+All three would have caused build errors even after fixing the declarative format.
+
+FILES CHANGED
+-------------
+
+1. android/settings.gradle  [FULL REWRITE]
+   Before: Imperatively read local.properties and applied app_plugin_loader.gradle via
+           `apply from: "$flutterSdkPath/packages/flutter_tools/gradle/app_plugin_loader.gradle"`
+   After:  pluginManagement block that uses includeBuild() to load Flutter's Gradle plugin
+           from the SDK, followed by a declarative plugins{} block with:
+             - dev.flutter.flutter-plugin-loader  v1.0.0
+             - com.android.application            v8.11.1
+             - org.jetbrains.kotlin.android       v2.2.20
+
+2. android/build.gradle  [SIMPLIFIED]
+   Before: Had buildscript{} block declaring AGP (8.1.4) and Kotlin (1.9.10) classpath deps,
+           plus ext.kotlin_version = '1.9.10'
+   After:  buildscript{} block removed entirely (plugins are now declared in settings.gradle).
+           allprojects{}, subproject config, and clean task are unchanged.
+
+3. android/app/build.gradle  [RESTRUCTURED]
+   Before: Used imperative apply:
+             apply plugin: 'com.android.application'
+             apply plugin: 'kotlin-android'
+             apply from: "$flutterRoot/packages/flutter_tools/gradle/flutter.gradle"
+           Used $flutterRoot variable (loaded manually from local.properties).
+           Hardcoded compileSdk 34, targetSdk 34.
+           Had explicit kotlin-stdlib-jdk7 dependency (using now-undefined $kotlin_version).
+   After:  Declarative plugins{} block:
+             id "com.android.application"
+             id "org.jetbrains.kotlin.android"
+             id "dev.flutter.flutter-gradle-plugin"
+           Uses flutter.compileSdkVersion (36) and flutter.targetSdkVersion (36) from
+           the Flutter extension — no more hardcoded SDK versions.
+           Removed $flutterRoot loading (no longer needed).
+           Removed explicit kotlin-stdlib dependency (Kotlin 2.x includes it automatically).
+
+4. android/gradle.properties  [CLEANED]
+   Removed two stale flags added by an older Flutter migrator tool:
+     android.builtInKotlin=false  (irrelevant in AGP 8.x; removed)
+     android.newDsl=false         (was an AGP 7.x opt-in flag; irrelevant in AGP 8.x; removed)
+   Kept: org.gradle.jvmargs, android.useAndroidX, android.enableJetifier
+
+5. android/gradle/wrapper/gradle-wrapper.properties  [VERSION BUMP]
+   Before: gradle-8.3-all.zip
+   After:  gradle-8.14.1-all.zip
+   Reason: Flutter 3.41.9 requires Gradle >= 8.7 (hard error below this).
+           8.14.1 is at/above the recommended version (warn threshold is 8.14).
+
+VERSION SUMMARY
+---------------
+Component       Before     After      Flutter 3.41.9 min  Recommended
+-----------     ------     -----      ------------------  -----------
+Gradle          8.3        8.14.1     8.7                 8.14
+AGP             8.1.4      8.11.1     8.6                 8.11.1
+Kotlin          1.9.10     2.2.20     2.0.0               2.2.20
+compileSdk      34         36 (auto)  -                   -
+targetSdk       34         36 (auto)  -                   -
+
+NEXT STEPS
+----------
+Matt can now run: flutter run
+Note: On first run, Gradle 8.14.1 will be downloaded (~150MB). Subsequent runs use the cache.
+Note: Java 17+ is required by Flutter 3.41.9. Verify with: flutter doctor

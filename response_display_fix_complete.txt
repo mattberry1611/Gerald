@@ -1,0 +1,65 @@
+Response Display Fix — gerald_app
+===================================
+Date: 2026-06-15
+File changed: gerald_app/lib/providers/app_state.dart
+
+Root cause
+----------
+The Flutter app sent POST /start (which returns {"ok": true} immediately
+while Claude runs as a background task), then tried to read the Gerald
+response out of the POST /start body — which had none. The real result
+lives in GET /read after Claude finishes.
+
+The poll loop (every 3 s) watched for a status transition from
+"executing" → "idle" to trigger _readResult(). But the backend writes
+statuses "working" and "done", which were both falling through to the
+default "idle" case in _parseStatus — so no transition was ever detected
+and _readResult() was never called.
+
+Changes made
+------------
+
+1. _parseStatus — added backend status mappings:
+   "working"  → GeraldStatus.executing
+   "done"     → GeraldStatus.idle   (was falling through to default/idle already,
+                                      but "working" was too, hiding the transition)
+
+2. _executePrompt — after POST /start returns ok:
+   - No longer tries to read a Gerald response from the /start body.
+   - Manually sets _status = GeraldStatus.executing.
+     This is the key race-condition guard: if Claude finishes before the
+     next poll tick (poll never sees "working"), the poller still sees the
+     executing → idle transition when "done" is read, because we
+     pre-seeded the status ourselves.
+   - Logs "Sent: ..." then "Waiting for Gerald..." (activity log entries).
+
+3. _poll transition check — broadened to also fire on:
+   prev == executing && next == error
+   (previously only fired on executing → idle)
+
+4. _readResult — now:
+   - Returns early if status == "empty" (outbox not yet written).
+   - Checks summary field first, then output (summary not yet in backend
+     but ready when added).
+   - If isError and no output: displays "Error:\n<stderr>" clearly.
+   - Logs "Response received" or "Error received" to activity log.
+   - TTS speaks the main response text when enabled (unchanged behavior).
+   - Increments resumeListenTick for conversation-mode auto-resume.
+
+5. _executePrompt — added ok-field check on /start response:
+   If backend returns {"ok": false, "error": "..."}, displays the error
+   message immediately and sets status to error.
+
+End-to-end flow after fix
+--------------------------
+1. User sends message → added to conversation immediately
+2. POST /start → app sets _status = executing, logs "Waiting for Gerald..."
+3. Poll detects "working" → _status already executing, no change needed
+4. Poll detects "done" → transition executing→idle → _readResult() called
+5. GET /read → output field displayed in conversation
+6. "Response received" logged; notification shown; TTS speaks if enabled
+7. Conversation mode auto-resumes listening
+
+If backend returns "error" status:
+- Transition executing→error triggers _readResult()
+- Error message shown in chat; "Error received" logged
