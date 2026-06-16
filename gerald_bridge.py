@@ -27,7 +27,8 @@ STATUS_FILE = os.path.join(BASE, "gerald_status.json")
 DEVICES_FILE = os.path.join(BASE, "gerald_devices.json")
 PROJECTS_FILE = os.path.join(BASE, "gerald_projects.json")
 APK_MANIFEST_FILE = os.path.join(BASE, "apk_manifest.json")
-APK_SERVE_FILE = os.path.join(BASE, "apk_serve", "gerald-latest.apk")
+APK_SERVE_DIR = os.path.join(BASE, "apk_serve")
+APK_SERVE_FILE = os.path.join(APK_SERVE_DIR, "gerald-latest.apk")
 
 CLAUDE_PS1 = ""
 
@@ -181,6 +182,38 @@ def write_outbox(data, outbox_file=None):
             json.dump(data, f, indent=2)
 
 
+
+def apply_write_file_blocks(output: str, allowed_base: str) -> list[str]:
+    """Apply Claude <write_file> blocks safely inside allowed_base."""
+    applied = []
+    pattern = re.compile(
+        r"<write_file>\s*<path>(.*?)</path>\s*<content>(.*?)</content>\s*</write_file>",
+        re.DOTALL,
+    )
+
+    base_abs = os.path.abspath(allowed_base)
+
+    for match in pattern.finditer(output or ""):
+        raw_path = match.group(1).strip()
+        content = match.group(2)
+
+        target = os.path.abspath(raw_path)
+
+        if not target.startswith(base_abs):
+            print(f"[write_file] BLOCKED outside project: {target}")
+            continue
+
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+
+        with open(target, "w", encoding="utf-8") as f:
+            f.write(content)
+
+        applied.append(target)
+        print(f"[write_file] Applied: {target}")
+
+    return applied
+
+
 def run_claude(task_text: str, project_path: str = BASE, project_name: str = "CommuteCoder"):
     print("\n==============================")
     print("📥 GERALD TASK RECEIVED")
@@ -223,6 +256,12 @@ Rules:
 - You ARE approved to edit files inside {project_path}
 - Do not ask Matt for permission for safe local file edits
 - Complete the task, then provide a concise summary of what changed
+- If you need to create or edit a file, you MUST output a <write_file> block:
+  <write_file>
+  <path>/absolute/path/to/file</path>
+  <content>full new file content here</content>
+  </write_file>
+- Do NOT output bash commands like cat, echo, tee, sed, or python to modify files
 {isolation_block}
 # Project Brain Update
 After completing the task, update the brain files in {project_path} if relevant:
@@ -247,6 +286,8 @@ Only update files that are directly relevant to what you just did. Keep updates 
             if getattr(block, "type", "") == "text"
         ).strip()
 
+        files_applied = apply_write_file_blocks(output, project_path)
+
         data = {
             "task": task_text,
             "project": project_name,
@@ -254,6 +295,7 @@ Only update files that are directly relevant to what you just did. Keep updates 
             "returncode": 0,
             "output": output,
             "error": "",
+            "files_applied": files_applied,
             "timestamp": datetime.now(timezone.utc).isoformat()
         }
 
