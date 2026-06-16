@@ -2,6 +2,7 @@ import os
 import re
 import json
 import subprocess
+from anthropic import Anthropic
 from datetime import datetime, timezone
 
 from fastapi import FastAPI, BackgroundTasks, HTTPException, Request
@@ -20,7 +21,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-BASE = r"C:\CommuteCoder"
+BASE = r"/opt/Gerald"
 OUTBOX_FILE = os.path.join(BASE, "gerald_outbox.json")
 STATUS_FILE = os.path.join(BASE, "gerald_status.json")
 DEVICES_FILE = os.path.join(BASE, "gerald_devices.json")
@@ -28,14 +29,14 @@ PROJECTS_FILE = os.path.join(BASE, "gerald_projects.json")
 APK_MANIFEST_FILE = os.path.join(BASE, "apk_manifest.json")
 APK_SERVE_FILE = os.path.join(BASE, "apk_serve", "gerald-latest.apk")
 
-CLAUDE_PS1 = r"C:\Users\Matt\AppData\Roaming\npm\claude.ps1"
+CLAUDE_PS1 = ""
 
 BRAIN_FILES = ["project_brain.md", "roadmap.md", "current_status.md", "architecture.md"]
 
 BUILTIN_PROJECTS = [
-    {"name": "CommuteCoder", "path": r"C:\CommuteCoder", "description": "Voice-driven AI coding supervisor"},
-    {"name": "RentMe", "path": r"C:\RentMe", "description": "Rental management app"},
-    {"name": "PlantBrain", "path": r"C:\PlantBrain", "description": "Plant care AI"},
+    {"name": "CommuteCoder", "path": r"/opt/Gerald", "description": "Voice-driven AI coding supervisor"},
+    {"name": "RentMe", "path": "/opt/projects/RentMe", "description": "Rental management app"},
+    {"name": "PlantBrain", "path": "/opt/projects/PlantBrain", "description": "Plant care AI"},
 ]
 
 
@@ -231,52 +232,36 @@ After completing the task, update the brain files in {project_path} if relevant:
 - architecture.md — update if the system structure changed
 Only update files that are directly relevant to what you just did. Keep updates concise."""
 
-    ps_command = f"""
-Set-Location '{project_path}';
-& '{CLAUDE_PS1}' --dangerously-skip-permissions -p @'
-{prompt}
-'@
-"""
-
     project_outbox = get_project_outbox_file(project_name)
 
     try:
-        result = subprocess.run(
-            [
-                "powershell",
-                "-NoProfile",
-                "-ExecutionPolicy", "Bypass",
-                "-Command", ps_command
-            ],
-            cwd=project_path,
-            capture_output=True,
-            text=True,
-            timeout=900
+        client = Anthropic()
+        message = client.messages.create(
+            model="claude-sonnet-4-5-20250929",
+            max_tokens=4096,
+            messages=[{"role": "user", "content": prompt}],
         )
 
-        output = (result.stdout or "").strip()
-        error = (result.stderr or "").strip()
+        output = "\n".join(
+            block.text for block in message.content
+            if getattr(block, "type", "") == "text"
+        ).strip()
 
         data = {
             "task": task_text,
             "project": project_name,
-            "status": "done" if result.returncode == 0 else "error",
-            "returncode": result.returncode,
+            "status": "done",
+            "returncode": 0,
             "output": output,
-            "error": error,
+            "error": "",
             "timestamp": datetime.now(timezone.utc).isoformat()
         }
 
         write_outbox(data, project_outbox)
-        write_status(
-            data["status"],
-            "Claude finished" if result.returncode == 0 else "Claude returned error"
-        )
+        write_status("done", "Claude API finished")
 
-        print("✅ CLAUDE FINISHED")
+        print("✅ CLAUDE API FINISHED")
         print(output)
-        if error:
-            print("STDERR:", error)
 
     except Exception as e:
         write_status("error", str(e))
@@ -318,7 +303,7 @@ def start(payload: dict, background_tasks: BackgroundTasks):
         if any(p["name"].lower() == detected_name.lower() for p in projects):
             msg = f"Project '{detected_name}' already exists."
         else:
-            proj_path = f"C:\\{detected_name}"
+            proj_path = f"/opt/projects/{detected_name}"
             try:
                 create_brain_files(proj_path, detected_name)
                 new_proj = {"name": detected_name, "path": proj_path, "description": ""}
@@ -425,7 +410,7 @@ def create_project(payload: dict):
         return {"ok": False, "error": "Project name is required"}
 
     if not path:
-        path = f"C:\\{name}"
+        path = f"/opt/projects/{name}"
 
     projects = load_projects()
 
