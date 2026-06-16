@@ -31,7 +31,7 @@ class Message {
 }
 
 class AppState extends ChangeNotifier {
-  String _baseUrl = 'http://127.0.0.1:8000';
+  String _baseUrl = 'https://geraldai.com.au';
   String? _selectedProject;
   GeraldStatus _status = GeraldStatus.offline;
   bool _isListening = false;
@@ -136,7 +136,7 @@ class AppState extends ChangeNotifier {
 
   Future<void> init() async {
     final prefs = await SharedPreferences.getInstance();
-    _baseUrl = prefs.getString('baseUrl') ?? 'http://127.0.0.1:8000';
+    _baseUrl = prefs.getString('baseUrl') ?? 'https://geraldai.com.au';
     _selectedProject = prefs.getString('selectedProject');
     _conversationMode = prefs.getBool('conversationMode') ?? false;
     _ttsEnabled = prefs.getBool('ttsEnabled') ?? true;
