@@ -712,7 +712,7 @@ class AppState extends ChangeNotifier {
         flavor: flavor,
         project: _selectedProject ?? 'CommuteCoder',
       );
-      final ok = result['ok'] as bool? ?? false;
+      final ok = result['ok'] as bool? ?? true;
       if (ok) {
         _log('Build triggered — polling for result...');
         await _pollBuildResult();
