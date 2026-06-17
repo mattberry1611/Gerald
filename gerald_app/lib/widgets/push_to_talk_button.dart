@@ -19,6 +19,8 @@ class _PushToTalkButtonState extends State<PushToTalkButton>
   bool _speechAvailable = false;
   String _recognized = '';
 
+  bool _buttonHeld = false;
+
   bool _wasConversationMode = false;
   int _lastResumeTick = -1;
   bool _resumeScheduled = false;
@@ -45,7 +47,9 @@ class _PushToTalkButtonState extends State<PushToTalkButton>
   Future<void> _initSpeech() async {
     _speechAvailable = await _speech.initialize(
       onStatus: (s) {
-        if (s == 'done' || s == 'notListening') _finalize();
+        // In PTT mode, ignore status-driven finalize while the button is held —
+        // the recognizer fires 'notListening' mid-sentence during normal cycles.
+        if ((s == 'done' || s == 'notListening') && !_buttonHeld) _finalize();
       },
       onError: (_) {
         if (mounted) context.read<AppState>().setListening(false);
@@ -75,13 +79,19 @@ class _PushToTalkButtonState extends State<PushToTalkButton>
     if (!_speechAvailable || !mounted) return;
     if (_speech.isListening) return;
     HapticFeedback.mediumImpact();
-    context.read<AppState>().setListening(true);
+    final state = context.read<AppState>();
+    state.setListening(true);
     _recognized = '';
+    // PTT mode: use a long pauseFor so natural mid-sentence pauses don't
+    // finalize the recording while the button is still held down.
+    final pauseFor = state.conversationMode
+        ? const Duration(seconds: 3)
+        : const Duration(seconds: 10);
     await _speech.listen(
       onResult: (r) => _recognized = r.recognizedWords,
       listenOptions: SpeechListenOptions(
         listenFor: const Duration(seconds: 60),
-        pauseFor: const Duration(seconds: 3),
+        pauseFor: pauseFor,
       ),
     );
   }
@@ -179,10 +189,20 @@ class _PushToTalkButtonState extends State<PushToTalkButton>
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        GestureDetector(
-          onTapDown: (loading || listening || speaking) ? null : (_) => _start(),
-          onTapUp: (_) => listening ? _stop() : null,
-          onTapCancel: listening ? _stop : null,
+        Listener(
+          onPointerDown: (_) {
+            if (loading || listening || speaking) return;
+            _buttonHeld = true;
+            _start();
+          },
+          onPointerUp: (_) {
+            _buttonHeld = false;
+            if (listening) _stop();
+          },
+          onPointerCancel: (_) {
+            _buttonHeld = false;
+            if (listening) _stop();
+          },
           child: AnimatedBuilder(
             animation: _pulseAnim,
             builder: (_, __) => Transform.scale(

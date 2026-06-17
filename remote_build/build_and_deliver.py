@@ -20,9 +20,9 @@ import urllib.error
 from datetime import datetime, timezone
 from pathlib import Path
 
-BASE = r"C:\CommuteCoder"
+BASE = "/opt/Gerald"
 GERALD_APP = os.path.join(BASE, "gerald_app")
-APK_OUTPUT = os.path.join(GERALD_APP, r"build\app\outputs\flutter-apk\app-debug.apk")
+APK_OUTPUT = os.path.join(GERALD_APP, "build/app/outputs/flutter-apk/app-debug.apk")
 APK_MANIFEST = os.path.join(BASE, "apk_manifest.json")
 APK_SERVE_DIR = os.path.join(BASE, "apk_serve")
 DEVICES_FILE = os.path.join(BASE, "gerald_devices.json")

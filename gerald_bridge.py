@@ -337,6 +337,9 @@ Rules:
             timeout=900,
         )
 
+        output = result.stdout.strip()
+        error = result.stderr.strip()
+
         changed_files = get_changed_files_under_lib(project_path)
         write_task_state(
             task_text,
