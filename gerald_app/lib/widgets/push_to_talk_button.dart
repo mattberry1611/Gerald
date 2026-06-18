@@ -70,6 +70,7 @@ class _PushToTalkButtonState extends State<PushToTalkButton>
     if (_recognized.trim().isNotEmpty) {
       state.sendPrompt(_recognized.trim());
       _recognized = '';
+      if (state.conversationMode) _scheduleStart();
     } else if (state.conversationMode) {
       _scheduleStart();
     }

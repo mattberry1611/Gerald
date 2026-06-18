@@ -559,15 +559,43 @@ def should_use_investigation_worker(text: str) -> bool:
     return any(x in t for x in investigation_terms) and not any(x in t for x in execution_terms)
 
 
+
+def narrow_investigation_prompt(task_text: str) -> str:
+    t = task_text or ""
+    lower = t.lower()
+
+    # Known Gerald app patterns: force broad voice/Mode B investigations into the file that actually owns the mic loop.
+    if "mode b" in lower or "conversation mode" in lower or "auto-listen" in lower or "auto listen" in lower:
+        return (
+            "Investigate only lib/widgets/push_to_talk_button.dart for why "
+            "Mode B / conversation voice auto-listen is not working. "
+            "Do not inspect any other files unless this file clearly cannot explain it. "
+            "Do not make changes. Report back only."
+        )
+
+    # Already narrow: preserve it.
+    if "only " in lower or ".dart" in lower or ".py" in lower:
+        return t
+
+    # Default: force single-file-first behaviour into the actual request, not just the rules.
+    return (
+        "Investigate the single most likely file for this issue first. "
+        "If a plausible root cause is found, stop immediately and report. "
+        "Do not inspect more than one file unless absolutely necessary.\n\n"
+        + t
+    )
+
 def run_claude_investigation_worker(task_text: str, project_name: str = "CommuteCoder"):
     project_path = "/opt/Gerald/gerald_app"
     project_outbox = get_project_outbox_file(project_name)
+
+    effective_task_text = narrow_investigation_prompt(task_text)
 
     safe_prompt = f"""
 You are Claude Code working for Gerald in READ-ONLY INVESTIGATION MODE.
 
 Matt's request:
-{task_text}
+{effective_task_text}
 
 Project: {project_name}
 Working directory: {project_path}
@@ -577,12 +605,15 @@ Rules:
 - Do not edit files.
 - Do not run formatters.
 - Do not build APK.
-- Inspect only the 3 to 6 most relevant files.
-- Do not run long searches.
+- Start with the single most relevant file only.
+- If the likely root cause is found in that file, stop immediately and report.
+- Only inspect a second file if it is absolutely necessary.
+- Never inspect more than 2 files.
+- Do not run broad repo searches unless no likely file is obvious.
 - Do not run Flutter commands.
 - Do not run tests.
-- Return within 90 seconds.
-- Keep the report under 600 words.
+- Return within 60 seconds.
+- Keep the report under 450 words.
 - Use this exact format:
   1. Files inspected
   2. What is happening
@@ -706,6 +737,13 @@ def should_use_claude_worker(text: str) -> bool:
         "fix the bug",
         "fix this",
         "fix it",
+        "fix the issue",
+        "fix the issue you identified",
+        "fix mode b",
+        "make only this smallest safe change",
+        "smallest safe change",
+        "apply the fix",
+        "make the fix",
         "change the",
         "change this",
         "update the",
