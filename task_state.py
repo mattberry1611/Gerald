@@ -13,6 +13,9 @@ VALID_STAGES = [
     "Verifying",
     "Completed",
     "Failed",
+    "Needs Clarification",
+    "Timed Out",
+    "Cancelled",
 ]
 
 def now_iso():
@@ -115,6 +118,30 @@ def fail_task(error):
     state["active"] = False
     state["end_time"] = now_iso()
     state["error"] = error
+    return _write(state)
+
+def timeout_task(error):
+    state = read_task()
+    state["stage"] = "Timed Out"
+    state["active"] = False
+    state["end_time"] = now_iso()
+    state["error"] = error
+    return _write(state)
+
+def clarification_task(question):
+    state = read_task()
+    state["stage"] = "Needs Clarification"
+    state["active"] = False
+    state["end_time"] = now_iso()
+    state["result"] = question
+    return _write(state)
+
+def cancel_task(reason):
+    state = read_task()
+    state["stage"] = "Cancelled"
+    state["active"] = False
+    state["end_time"] = now_iso()
+    state["error"] = reason
     return _write(state)
 
 def truthful_status():

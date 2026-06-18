@@ -301,10 +301,56 @@ Only update files that are directly relevant to what you just did. Keep updates 
 
 
 
+
+def should_use_backend_root(task_text: str) -> bool:
+    lower = (task_text or "").lower()
+    backend_terms = [
+        "gerald_bridge.py",
+        "decision agent",
+        "review agent",
+        "gerald review",
+        "backend",
+        "routing",
+        "worker directory",
+        "task state",
+        "outbox",
+        "gerald_openai_brain",
+        "gerald brain",
+        "review step",
+        "after claude",
+        "before marking completed",
+        "mark task completed",
+    ]
+    flutter_terms = [
+        "home screen",
+        "button",
+        "ui",
+        "screen",
+        "widget",
+        "flutter",
+        "apk button",
+        "text box",
+        "microphone",
+        "mode selector",
+    ]
+    if any(t in lower for t in backend_terms):
+        return True
+    if any(t in lower for t in flutter_terms):
+        return False
+    return False
+
+def get_worker_directory(task_text: str, project_name: str = "CommuteCoder") -> str:
+    if should_use_backend_root(task_text):
+        return "/opt/Gerald"
+    return "/opt/Gerald/gerald_app"
+
+
 def run_claude_code_worker(task_text: str, project_name: str = "CommuteCoder"):
     """Run approved implementation tasks through real Claude Code CLI."""
     project_path = "/opt/Gerald/gerald_app"
     project_outbox = get_project_outbox_file(project_name)
+
+    worker_dir = get_worker_directory(task_text, project_name)
 
     safe_prompt = f"""
 You are Claude Code working for Gerald.
@@ -313,7 +359,7 @@ Matt's request:
 {task_text}
 
 Project: {project_name}
-Working directory: {project_path}
+Working directory: {worker_dir}
 
 Rules:
 - Inspect relevant Flutter files first.
@@ -332,9 +378,9 @@ Rules:
             [
                 "sudo", "-u", "geraldbuild", "-H",
                 "bash", "-lc",
-                f"cd {project_path} && claude --permission-mode bypassPermissions -p {shlex.quote(safe_prompt)}"
+                f"cd {worker_dir} && claude --permission-mode bypassPermissions -p {shlex.quote(safe_prompt)}"
             ],
-            cwd=project_path,
+            cwd=worker_dir,
             capture_output=True,
             text=True,
             timeout=900,
@@ -659,6 +705,8 @@ def run_claude_investigation_worker(task_text: str, project_name: str = "Commute
     project_path = "/opt/Gerald/gerald_app"
     project_outbox = get_project_outbox_file(project_name)
 
+    worker_dir = get_worker_directory(task_text, project_name)
+
     effective_task_text = narrow_investigation_prompt(task_text)
 
     safe_prompt = f"""
@@ -668,7 +716,7 @@ Matt's request:
 {effective_task_text}
 
 Project: {project_name}
-Working directory: {project_path}
+Working directory: {worker_dir}
 
 Rules:
 - READ ONLY.
@@ -707,9 +755,9 @@ Rules:
             [
                 "sudo", "-u", "geraldbuild", "-H",
                 "bash", "-lc",
-                f'cd {project_path} && claude --permission-mode bypassPermissions -p "$(cat {prompt_file})"'
+                f'cd {worker_dir} && claude --permission-mode bypassPermissions -p "$(cat {prompt_file})"'
             ],
-            cwd=project_path,
+            cwd=worker_dir,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
@@ -1489,7 +1537,7 @@ def send_to_claude_code(payload: dict):
 You are Claude Code running on Gerald Server.
 
 Project: {project}
-Working directory: /opt/Gerald/gerald_app
+Working directory: {worker_dir}
 
 Task from Gerald:
 {message}
@@ -1512,9 +1560,9 @@ Rules:
             [
                 "sudo", "-u", "geraldbuild", "-H",
                 "bash", "-lc",
-                f"cd /opt/Gerald/gerald_app && claude --permission-mode bypassPermissions -p {safe_prompt!r}"
+                f"cd {worker_dir} && claude --permission-mode bypassPermissions -p {safe_prompt!r}"
             ],
-            cwd="/opt/Gerald/gerald_app",
+            cwd=worker_dir,
             capture_output=True,
             text=True,
             timeout=600,
