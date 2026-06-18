@@ -8,6 +8,7 @@ import shlex
 import urllib.request
 import urllib.error
 from anthropic import Anthropic
+from openai import OpenAI
 from datetime import datetime, timezone
 
 from fastapi import FastAPI, BackgroundTasks, UploadFile, File, Form, HTTPException, Request
@@ -1025,6 +1026,143 @@ def load_last_outbox_task(project_name: str = "CommuteCoder") -> str:
     except Exception:
         return ""
 
+
+def _json_preview(value, limit=2500):
+    try:
+        text = json.dumps(value, indent=2)
+    except Exception:
+        text = str(value)
+    return text[:limit]
+
+def decide_next_action(user_text: str, project_name: str, payload: dict) -> dict:
+    """
+    Gerald Decision Agent V1.
+    OpenAI decides what should happen next.
+    This replaces Gerald guessing via hardcoded routing rules.
+    """
+    api_key = os.environ.get("OPENAI_API_KEY", "").strip()
+    if not api_key:
+        return {
+            "action": "fallback_router",
+            "reason": "OPENAI_API_KEY missing",
+            "task": user_text,
+            "message": "",
+        }
+
+    current_task = read_task()
+    pending = ""
+    try:
+        pending = load_pending_approval(project_name)
+    except Exception:
+        pending = ""
+
+    last_outbox = {}
+    try:
+        path = get_project_outbox_file(project_name)
+        if os.path.exists(path):
+            with open(path, "r", encoding="utf-8") as f:
+                last_outbox = json.load(f)
+    except Exception:
+        last_outbox = {}
+
+    prompt = f"""
+You are Gerald Decision Agent V1.
+
+You are NOT the coder. You are the decision maker above Gerald Brain and Claude Code.
+
+Your job:
+Decide the next backend action for Matt's current message.
+
+Available actions:
+- answer_directly: Answer Matt without Claude and without code changes.
+- gerald_brain: Send to Gerald Brain for normal reasoning/planning.
+- save_pending_plan: Save Gerald Brain's plan for approval. Usually not used directly from /start.
+- execute_pending_approval: Matt approved the current pending plan. Send that pending plan to Claude Code.
+- claude_code: Matt is clearly asking to make an implementation/code change now.
+- readonly_investigation: Matt asks to investigate/report without changing files.
+- status_check: Matt asks what is happening / are you done / status.
+- fallback_router: If uncertain, use old backend router.
+
+Rules:
+1. Questions like "can you see the screenshot?", "what do you think?", "why did this happen?" should be answer_directly or gerald_brain, NOT claude_code.
+2. If Matt asks for a plan, summary, or says "don't make changes yet", choose gerald_brain.
+3. If Matt says "yes", "proceed", "happy to proceed", or approves a pending plan, choose execute_pending_approval IF pending approval exists.
+4. If there is no pending approval and Matt only says yes/proceed, choose gerald_brain and explain there is no pending plan.
+5. Only choose claude_code when Matt clearly wants code changed now.
+6. Choose readonly_investigation only when Matt asks to investigate/report and explicitly says no changes or read-only.
+7. Prefer reasoning over action when ambiguous.
+8. Return ONLY valid JSON. No markdown.
+
+Context:
+PROJECT:
+{project_name}
+
+CURRENT USER MESSAGE:
+{user_text}
+
+PAYLOAD KEYS:
+{list(payload.keys())}
+
+CURRENT TASK:
+{_json_preview(current_task)}
+
+PENDING APPROVAL:
+{pending[:2500]}
+
+LAST OUTBOX:
+{_json_preview(last_outbox)}
+
+Return JSON with this schema:
+{{
+  "action": "answer_directly|gerald_brain|execute_pending_approval|claude_code|readonly_investigation|status_check|fallback_router",
+  "reason": "short reason",
+  "task": "the exact task to pass to worker if applicable",
+  "message": "brief direct response if action is answer_directly"
+}}
+"""
+
+    try:
+        client = OpenAI(api_key=api_key)
+        response = client.responses.create(
+            model=os.environ.get("GERALD_DECISION_MODEL", "gpt-4.1"),
+            instructions="You are a strict backend decision router. Return only valid JSON.",
+            input=prompt,
+        )
+        raw = (response.output_text or "").strip()
+        data = json.loads(raw)
+        if not isinstance(data, dict):
+            raise ValueError("decision response was not a JSON object")
+        data.setdefault("action", "fallback_router")
+        data.setdefault("reason", "")
+        data.setdefault("task", user_text)
+        data.setdefault("message", "")
+        return data
+    except Exception as e:
+        return {
+            "action": "fallback_router",
+            "reason": f"Decision agent failed: {e}",
+            "task": user_text,
+            "message": "",
+        }
+
+def run_direct_answer(task_text: str, project_name: str, message: str):
+    outbox_file = get_project_outbox_file(project_name)
+    reply = message or ask_gerald(task_text, project_name)
+    data = {
+        "task": task_text,
+        "project": project_name,
+        "status": "done",
+        "returncode": 0,
+        "output": reply,
+        "summary": reply,
+        "error": "",
+        "timestamp": datetime.now(timezone.utc).isoformat()
+    }
+    write_outbox(data)
+    write_outbox(data, outbox_file)
+    write_task_state(task_text, project_name, "completed", "Gerald answered", files_changed=[], output=reply, error="")
+    write_status("idle", "Gerald answered")
+
 @app.post("/start")
 def start(payload: dict, background_tasks: BackgroundTasks):
     print("\n====== /start PAYLOAD ======")
@@ -1076,6 +1214,51 @@ def start(payload: dict, background_tasks: BackgroundTasks):
     project_name_input = raw_project.strip() if isinstance(raw_project, str) else ""
     project_path, resolved_name = resolve_project(project_name_input)
 
+    # Gerald Decision Agent V1: OpenAI decides the next backend action.
+    decision = decide_next_action(text, resolved_name, payload)
+    decision_action = (decision.get("action") or "fallback_router").strip()
+    decision_task = (decision.get("task") or text).strip()
+    decision_message = (decision.get("message") or "").strip()
+
+    print("[Decision Agent]", json.dumps(decision, indent=2))
+
+    if decision_action == "status_check":
+        truthful_status_response(resolved_name)
+        return {"ok": True, "message": "Decision Agent: status check complete.", "decision": decision}
+
+    if decision_action == "answer_directly":
+        background_tasks.add_task(run_direct_answer, text, resolved_name, decision_message)
+        write_status("working", f"Gerald is answering: {resolved_name}")
+        return {"ok": True, "message": "Decision Agent: answering directly.", "decision": decision}
+
+    if decision_action == "gerald_brain":
+        background_tasks.add_task(run_gerald_brain, decision_task, resolved_name)
+        write_status("working", f"Gerald is thinking: {resolved_name}")
+        return {"ok": True, "message": "Decision Agent: sent to Gerald Brain.", "decision": decision}
+
+    if decision_action == "execute_pending_approval":
+        pending_task = load_pending_approval(resolved_name)
+        if pending_task:
+            clear_pending_approval()
+            claude_task = decision_task if decision_task else clean_task_for_claude(pending_task)
+            background_tasks.add_task(run_claude_code_worker, claude_task, resolved_name)
+            write_status("executing", f"Decision Agent approved pending plan: {resolved_name}")
+            return {"ok": True, "message": "Decision Agent: pending plan sent to Claude Code.", "decision": decision}
+        background_tasks.add_task(run_gerald_brain, "Matt approved, but no pending approval plan exists. Explain this briefly and ask what he wants to proceed with.", resolved_name)
+        write_status("working", f"Gerald is resolving missing approval: {resolved_name}")
+        return {"ok": True, "message": "Decision Agent: no pending approval found.", "decision": decision}
+
+    if decision_action == "readonly_investigation":
+        background_tasks.add_task(run_claude_investigation_worker, decision_task, resolved_name)
+        write_status("investigating", f"Decision Agent sent investigation to Claude: {resolved_name}")
+        return {"ok": True, "message": "Decision Agent: read-only investigation started.", "decision": decision}
+
+    if decision_action == "claude_code":
+        background_tasks.add_task(run_claude_code_worker, decision_task, resolved_name)
+        write_status("executing", f"Decision Agent sent task to Claude: {resolved_name}")
+        return {"ok": True, "message": "Decision Agent: task sent to Claude Code.", "decision": decision}
+
+    # Fallback keeps the previous router available while Decision Agent V1 settles.
     if is_status_check(text):
         truthful_status_response(resolved_name)
         return {"ok": True, "message": "Truthful status check complete."}
