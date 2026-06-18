@@ -508,6 +508,140 @@ def truthful_status_response(project_name: str = "CommuteCoder"):
     write_status("idle", "Truthful status check complete")
     return data
 
+
+def should_use_investigation_worker(text: str) -> bool:
+    t = (text or "").lower()
+
+    investigation_terms = [
+        "investigate",
+        "diagnose",
+        "report back",
+        "come back to me",
+        "do not make changes",
+        "do not change anything",
+        "no code changes",
+        "do not code",
+        "read-only",
+        "read only",
+        "give me a plan",
+        "why is",
+        "why does",
+        "why doesn't",
+        "why isnt",
+        "why isn't",
+        "what is broken",
+    ]
+
+    execution_terms = [
+        "fix it",
+        "fix this",
+        "implement",
+        "make the change",
+        "change the code",
+        "update the code",
+        "apply the fix",
+        "proceed",
+        "approved",
+    ]
+
+    return any(x in t for x in investigation_terms) and not any(x in t for x in execution_terms)
+
+
+def run_claude_investigation_worker(task_text: str, project_name: str = "CommuteCoder"):
+    project_path = "/opt/Gerald/gerald_app"
+    project_outbox = get_project_outbox_file(project_name)
+
+    safe_prompt = f"""
+You are Claude Code working for Gerald in READ-ONLY INVESTIGATION MODE.
+
+Matt's request:
+{task_text}
+
+Project: {project_name}
+Working directory: {project_path}
+
+Rules:
+- READ ONLY.
+- Do not edit files.
+- Do not run formatters.
+- Do not build APK.
+- Inspect relevant files only.
+- Report exact files/functions involved.
+- Explain the likely root cause.
+- Recommend the smallest safe fix.
+- Do not claim you changed anything.
+"""
+
+    prompt_file = "/tmp/gerald_readonly_investigation_prompt.txt"
+
+    write_task_state(task_text, project_name, "investigating", "Claude Code is investigating read-only")
+    write_status("investigating", "Claude Code is investigating read-only")
+
+    try:
+        with open(prompt_file, "w", encoding="utf-8") as f:
+            f.write(safe_prompt)
+
+        result = subprocess.run(
+            [
+                "sudo", "-u", "geraldbuild", "-H",
+                "bash", "-lc",
+                f'cd {project_path} && claude --permission-mode bypassPermissions -p "$(cat {prompt_file})"'
+            ],
+            cwd=project_path,
+            capture_output=True,
+            text=True,
+            timeout=600,
+        )
+
+        output = result.stdout.strip()
+        error = result.stderr.strip()
+
+        data = {
+            "task": task_text,
+            "project": project_name,
+            "status": "done" if result.returncode == 0 else "error",
+            "returncode": result.returncode,
+            "output": output,
+            "summary": output,
+            "error": error,
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        }
+
+        write_outbox(data)
+        write_outbox(data, project_outbox)
+
+        write_task_state(
+            task_text,
+            project_name,
+            "completed" if result.returncode == 0 else "failed",
+            "Read-only investigation finished" if result.returncode == 0 else "Read-only investigation failed",
+            files_changed=[],
+            output=output,
+            error=error,
+        )
+
+        write_status(
+            "idle" if result.returncode == 0 else "error",
+            "Read-only investigation finished" if result.returncode == 0 else "Read-only investigation failed",
+        )
+
+    except subprocess.TimeoutExpired:
+        err = "Read-only investigation timed out"
+        data = {
+            "task": task_text,
+            "project": project_name,
+            "status": "error",
+            "output": "",
+            "summary": "",
+            "error": err,
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        }
+        write_outbox(data)
+        write_outbox(data, project_outbox)
+        write_task_state(task_text, project_name, "failed", err, files_changed=[], output="", error=err)
+        write_status("error", err)
+
+
 def should_use_claude_worker(text: str) -> bool:
     lower = (text or "").lower()
     worker_phrases = [
@@ -698,6 +832,18 @@ def start(payload: dict, background_tasks: BackgroundTasks):
         truthful_status_response(resolved_name)
         return {"ok": True, "message": "Truthful status check complete."}
 
+    current_task = read_task()
+    busy_stages = {"executing", "investigating", "working", "planning", "sending", "queued"}
+    stage = str(current_task.get("stage", "")).lower()
+    active = bool(current_task.get("active"))
+
+    if active or stage in busy_stages:
+        return {
+            "ok": False,
+            "message": f"Gerald is already busy ({stage or 'active'}). Please wait for the current task to finish.",
+            "task": current_task,
+        }
+
     if is_simple_approval(text):
         previous_task = load_last_outbox_task(resolved_name)
         if previous_task:
@@ -705,6 +851,11 @@ def start(payload: dict, background_tasks: BackgroundTasks):
             write_status("executing", f"Approval received — Claude Code is working on: {resolved_name}")
             return {"ok": True, "message": "Approval received. Previous Gerald task sent to Claude Code."}
         return {"ok": False, "message": "No previous task found to approve."}
+
+    if should_use_investigation_worker(text):
+        background_tasks.add_task(run_claude_investigation_worker, text, resolved_name)
+        write_status("investigating", f"Claude Code is investigating: {resolved_name}")
+        return {"ok": True, "message": "Read-only investigation started."}
 
     if should_use_claude_worker(text):
         background_tasks.add_task(run_claude_code_worker, text, resolved_name)
