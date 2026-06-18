@@ -2,6 +2,7 @@ import os
 import re
 import json
 import subprocess
+import signal
 import shlex
 import urllib.request
 import urllib.error
@@ -565,10 +566,18 @@ Rules:
 - Do not edit files.
 - Do not run formatters.
 - Do not build APK.
-- Inspect relevant files only.
-- Report exact files/functions involved.
-- Explain the likely root cause.
-- Recommend the smallest safe fix.
+- Inspect only the 3 to 6 most relevant files.
+- Do not run long searches.
+- Do not run Flutter commands.
+- Do not run tests.
+- Return within 90 seconds.
+- Keep the report under 600 words.
+- Use this exact format:
+  1. Files inspected
+  2. What is happening
+  3. Likely root cause
+  4. Smallest safe fix
+  5. Files that would need changing
 - Do not claim you changed anything.
 """
 
@@ -581,21 +590,45 @@ Rules:
         with open(prompt_file, "w", encoding="utf-8") as f:
             f.write(safe_prompt)
 
-        result = subprocess.run(
+        proc = subprocess.Popen(
             [
                 "sudo", "-u", "geraldbuild", "-H",
                 "bash", "-lc",
                 f'cd {project_path} && claude --permission-mode bypassPermissions -p "$(cat {prompt_file})"'
             ],
             cwd=project_path,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
-            timeout=180,
             start_new_session=True,
         )
 
-        output = result.stdout.strip()
-        error = result.stderr.strip()
+        try:
+            stdout, stderr = proc.communicate(timeout=120)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(proc.pid, signal.SIGTERM)
+            except Exception:
+                pass
+            try:
+                proc.wait(timeout=10)
+            except Exception:
+                try:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                except Exception:
+                    pass
+            raise
+
+        output = (stdout or "").strip()
+        error = (stderr or "").strip()
+
+        class Result:
+            pass
+
+        result = Result()
+        result.returncode = proc.returncode
+        result.stdout = output
+        result.stderr = error
 
         data = {
             "task": task_text,
@@ -628,10 +661,10 @@ Rules:
 
     except subprocess.TimeoutExpired:
         try:
-            subprocess.run(["pkill", "-f", "gerald_readonly_investigation_prompt"], timeout=10)
+            subprocess.run(["pkill", "-f", "claude --permission-mode bypassPermissions"], timeout=10)
         except Exception:
             pass
-        err = "Read-only investigation timed out after 180 seconds"
+        err = "Read-only investigation timed out after 120 seconds"
         data = {
             "task": task_text,
             "project": project_name,
