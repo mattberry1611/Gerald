@@ -352,6 +352,17 @@ def run_claude_code_worker(task_text: str, project_name: str = "CommuteCoder"):
 
     worker_dir = get_worker_directory(task_text, project_name)
 
+    bridge_rule = (
+        "- Backend task approved: gerald_bridge.py may be edited if needed."
+        if should_use_backend_root(task_text)
+        else "- Do not edit gerald_bridge.py."
+    )
+    inspect_rule = (
+        "- Inspect relevant backend files first."
+        if should_use_backend_root(task_text)
+        else "- Inspect relevant Flutter files first."
+    )
+
     safe_prompt = f"""
 You are Claude Code working for Gerald.
 
@@ -362,10 +373,10 @@ Project: {project_name}
 Working directory: {worker_dir}
 
 Rules:
-- Inspect relevant Flutter files first.
+{inspect_rule}
 - Make the smallest safe change that satisfies Matt's request.
 - Preserve existing behaviour and functionality.
-- Do not edit gerald_bridge.py.
+{bridge_rule}
 - Do not build APK.
 - After editing, summarize exactly which files changed and what changed.
 """
