@@ -467,6 +467,25 @@ def write_task_state(task: str, project: str, stage: str, detail: str = "", file
         json.dump(data, f, indent=2)
     return data
 
+
+def looks_like_clarification_request(output: str) -> bool:
+    lower = (output or "").lower()
+    phrases = [
+        "i'll wait for your clarification",
+        "i will wait for your clarification",
+        "please clarify",
+        "please confirm",
+        "which instruction",
+        "which should i follow",
+        "conflict",
+        "direct conflict",
+        "contradiction",
+        "contradictory",
+        "i won't take action until",
+        "i will not take action until",
+    ]
+    return any(p in lower for p in phrases)
+
 def read_task_state():
     if not os.path.exists(TASK_STATE_FILE):
         return {
@@ -816,20 +835,32 @@ Rules:
         write_outbox(data)
         write_outbox(data, project_outbox)
 
-        write_task_state(
-            task_text,
-            project_name,
-            "completed" if result.returncode == 0 else "failed",
-            "Read-only investigation finished" if result.returncode == 0 else "Read-only investigation failed",
-            files_changed=[],
-            output=output,
-            error=error,
-        )
+        if result.returncode == 0 and looks_like_clarification_request(output):
+            write_task_state(
+                task_text,
+                project_name,
+                "needs_clarification",
+                "Claude needs clarification",
+                files_changed=[],
+                output=output,
+                error="",
+            )
+            write_status("needs_clarification", "Claude needs clarification")
+        else:
+            write_task_state(
+                task_text,
+                project_name,
+                "completed" if result.returncode == 0 else "failed",
+                "Read-only investigation finished" if result.returncode == 0 else "Read-only investigation failed",
+                files_changed=[],
+                output=output,
+                error=error,
+            )
 
-        write_status(
-            "idle" if result.returncode == 0 else "error",
-            "Read-only investigation finished" if result.returncode == 0 else "Read-only investigation failed",
-        )
+            write_status(
+                "idle" if result.returncode == 0 else "error",
+                "Read-only investigation finished" if result.returncode == 0 else "Read-only investigation failed",
+            )
 
     except subprocess.TimeoutExpired:
         try:
@@ -871,8 +902,8 @@ Rules:
         }
         write_outbox(data)
         write_outbox(data, project_outbox)
-        write_task_state(task_text, project_name, "failed", err, files_changed=[], output="", error=err)
-        write_status("error", err)
+        write_task_state(task_text, project_name, "timed_out", err, files_changed=[], output="", error=err)
+        write_status("timed_out", err)
 
 
 def should_use_claude_worker(text: str) -> bool:
