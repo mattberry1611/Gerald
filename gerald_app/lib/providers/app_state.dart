@@ -178,6 +178,7 @@ class AppState extends ChangeNotifier {
   Future<void> _poll() async {
     try {
       final data = await _api.getStatus();
+      _backendReachable = true;
       final rawStatus = data['status'] as String? ?? 'idle';
       final next = _parseStatus(rawStatus);
 
