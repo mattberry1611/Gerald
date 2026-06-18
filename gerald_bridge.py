@@ -331,7 +331,7 @@ Rules:
             [
                 "sudo", "-u", "geraldbuild", "-H",
                 "bash", "-lc",
-                f"cd {project_path} && claude --permission-mode bypassPermissions -p {safe_prompt!r}"
+                f"cd {project_path} && claude --permission-mode bypassPermissions -p {shlex.quote(safe_prompt)}"
             ],
             cwd=project_path,
             capture_output=True,
@@ -522,6 +522,55 @@ def truthful_status_response(project_name: str = "CommuteCoder"):
     return data
 
 
+
+
+def is_general_question(text: str) -> bool:
+    lower = (text or "").strip().lower()
+
+    screenshot_question_phrases = [
+        "can you see the screenshot",
+        "can you see my screenshot",
+        "do you see the screenshot",
+        "can you see the image",
+        "can you see my image",
+        "do you see the image",
+        "can you see what i sent",
+    ]
+    if any(p in lower for p in screenshot_question_phrases):
+        return True
+
+    question_starts = [
+        "can you see",
+        "can you tell",
+        "do you see",
+        "what do you think",
+        "what happened",
+        "why did",
+        "why is",
+        "is this",
+        "does this",
+        "are we",
+    ]
+    implementation_words = [
+        "change",
+        "edit",
+        "update",
+        "implement",
+        "fix",
+        "build",
+        "create",
+        "add",
+        "remove",
+        "delete",
+        "make",
+        "commit",
+        "push",
+    ]
+
+    if any(lower.startswith(q) for q in question_starts):
+        return not any(w in lower for w in implementation_words)
+
+    return False
 
 def is_planning_only_request(text: str) -> bool:
     lower = (text or "").lower()
@@ -1067,6 +1116,11 @@ def start(payload: dict, background_tasks: BackgroundTasks):
         background_tasks.add_task(run_gerald_brain, text, resolved_name)
         write_status("working", f"Gerald is planning: {resolved_name}")
         return {"ok": True, "message": "Planning request sent to Gerald Brain."}
+
+    if is_general_question(text):
+        background_tasks.add_task(run_gerald_brain, text, resolved_name)
+        write_status("working", f"Gerald is answering: {resolved_name}")
+        return {"ok": True, "message": "Question sent to Gerald Brain."}
 
     if should_use_claude_worker(text):
         background_tasks.add_task(run_claude_code_worker, text, resolved_name)

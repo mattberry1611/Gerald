@@ -287,11 +287,13 @@ class _VoiceSection extends StatelessWidget {
                 active: state.showTextInput,
                 activeColor: kAccentBlue,
                 tooltip: 'Text input',
+                label: 'Text',
                 onPressed: state.toggleTextInput,
               ),
               _UtilityButton(
                 icon: Icons.attach_file_rounded,
                 tooltip: 'Attach image',
+                label: 'Attach',
                 onPressed: () => _pickImage(context, state),
               ),
               if (state.isSpeaking)
@@ -300,11 +302,13 @@ class _VoiceSection extends StatelessWidget {
                   active: true,
                   activeColor: kAccentPurple,
                   tooltip: 'Stop speaking',
+                  label: 'Stop',
                   onPressed: state.stopSpeaking,
                 ),
               _UtilityButton(
                 icon: Icons.delete_sweep_outlined,
-                tooltip: 'Clear',
+                tooltip: 'Clear conversation',
+                label: 'Clear',
                 onPressed: () => _confirmClear(context, state),
               ),
             ],
@@ -329,7 +333,7 @@ class _ModeSelector extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final convMode = state.conversationMode;
-    final height = compact ? 36.0 : 42.0;
+    final height = compact ? 36.0 : 52.0;
     final radius = compact ? 8.0 : 10.0;
     final fontSize = compact ? 9.0 : 10.0;
 
@@ -363,24 +367,42 @@ class _ModeSelector extends StatelessWidget {
                     : null,
               ),
               child: Center(
-                child: Row(
+                child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Icon(
-                      Icons.touch_app_outlined,
-                      size: 12,
-                      color: !convMode ? kAccentBlue : kTextSecondary,
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.touch_app_outlined,
+                          size: 12,
+                          color: !convMode ? kAccentBlue : kTextSecondary,
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          'COMMAND',
+                          style: TextStyle(
+                            color: !convMode ? kAccentBlue : kTextSecondary,
+                            fontSize: fontSize,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: 1.2,
+                          ),
+                        ),
+                      ],
                     ),
-                    const SizedBox(width: 4),
-                    Text(
-                      'MODE A',
-                      style: TextStyle(
-                        color: !convMode ? kAccentBlue : kTextSecondary,
-                        fontSize: fontSize,
-                        fontWeight: FontWeight.w700,
-                        letterSpacing: 1.2,
+                    if (!compact) ...[
+                      const SizedBox(height: 3),
+                      Text(
+                        'hold to speak',
+                        style: TextStyle(
+                          color: !convMode
+                              ? kAccentBlue.withOpacity(0.65)
+                              : kTextMuted,
+                          fontSize: 9,
+                          letterSpacing: 0.3,
+                        ),
                       ),
-                    ),
+                    ],
                   ],
                 ),
               ),
@@ -416,24 +438,42 @@ class _ModeSelector extends StatelessWidget {
                     : null,
               ),
               child: Center(
-                child: Row(
+                child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Icon(
-                      Icons.record_voice_over_outlined,
-                      size: 12,
-                      color: convMode ? kAccentBlue : kTextSecondary,
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.record_voice_over_outlined,
+                          size: 12,
+                          color: convMode ? kAccentBlue : kTextSecondary,
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          'CONVERSE',
+                          style: TextStyle(
+                            color: convMode ? kAccentBlue : kTextSecondary,
+                            fontSize: fontSize,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: 1.2,
+                          ),
+                        ),
+                      ],
                     ),
-                    const SizedBox(width: 4),
-                    Text(
-                      'MODE B',
-                      style: TextStyle(
-                        color: convMode ? kAccentBlue : kTextSecondary,
-                        fontSize: fontSize,
-                        fontWeight: FontWeight.w700,
-                        letterSpacing: 1.2,
+                    if (!compact) ...[
+                      const SizedBox(height: 3),
+                      Text(
+                        'auto-listens',
+                        style: TextStyle(
+                          color: convMode
+                              ? kAccentBlue.withOpacity(0.65)
+                              : kTextMuted,
+                          fontSize: 9,
+                          letterSpacing: 0.3,
+                        ),
                       ),
-                    ),
+                    ],
                   ],
                 ),
               ),
@@ -453,6 +493,7 @@ class _UtilityButton extends StatelessWidget {
   final Color activeColor;
   final String tooltip;
   final VoidCallback onPressed;
+  final String? label;
 
   const _UtilityButton({
     required this.icon,
@@ -460,17 +501,24 @@ class _UtilityButton extends StatelessWidget {
     required this.onPressed,
     this.active = false,
     this.activeColor = kAccentBlue,
+    this.label,
   });
 
   @override
   Widget build(BuildContext context) {
+    final iconColor = active ? activeColor : kTextSecondary;
+    final iconWidget = Icon(icon, size: 22, color: iconColor);
+
     return Tooltip(
       message: tooltip,
       child: GestureDetector(
         onTap: onPressed,
         child: Container(
-          width: 44,
-          height: 44,
+          width: label == null ? 44 : null,
+          height: label == null ? 44 : null,
+          padding: label != null
+              ? const EdgeInsets.symmetric(horizontal: 10, vertical: 6)
+              : null,
           decoration: active
               ? BoxDecoration(
                   color: activeColor.withOpacity(0.12),
@@ -481,11 +529,23 @@ class _UtilityButton extends StatelessWidget {
                   ),
                 )
               : null,
-          child: Icon(
-            icon,
-            size: 22,
-            color: active ? activeColor : kTextSecondary,
-          ),
+          child: label != null
+              ? Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    iconWidget,
+                    const SizedBox(height: 3),
+                    Text(
+                      label!,
+                      style: TextStyle(
+                        fontSize: 9,
+                        color: iconColor,
+                        letterSpacing: 0.3,
+                      ),
+                    ),
+                  ],
+                )
+              : iconWidget,
         ),
       ),
     );
@@ -543,8 +603,8 @@ class _EmptyState extends StatelessWidget {
               children: [
                 _Hint(
                   icon: Icons.touch_app_outlined,
-                  label: 'MODE A',
-                  sub: 'Hold mic to speak',
+                  label: 'COMMAND',
+                  sub: 'Hold to speak',
                 ),
                 Container(
                   width: 1,
@@ -554,7 +614,7 @@ class _EmptyState extends StatelessWidget {
                 ),
                 _Hint(
                   icon: Icons.record_voice_over_outlined,
-                  label: 'MODE B',
+                  label: 'CONVERSE',
                   sub: 'Auto-listens',
                 ),
               ],
