@@ -35,6 +35,7 @@ class AppState extends ChangeNotifier {
   String _baseUrl = 'https://geraldai.com.au';
   String? _selectedProject;
   GeraldStatus _status = GeraldStatus.offline;
+  bool _backendReachable = false;
   bool _isListening = false;
   bool _isLoading = false;
   bool _isSpeaking = false;
@@ -76,6 +77,7 @@ class AppState extends ChangeNotifier {
   String get baseUrl => _baseUrl;
   String? get selectedProject => _selectedProject;
   GeraldStatus get status => _status;
+  bool get backendReachable => _backendReachable;
   bool get isListening => _isListening;
   bool get isLoading => _isLoading;
   bool get isSpeaking => _isSpeaking;
@@ -202,6 +204,7 @@ class AppState extends ChangeNotifier {
         notifyListeners();
       }
     } catch (_) {
+      _backendReachable = false;
       if (_status != GeraldStatus.offline) {
         _status = GeraldStatus.offline;
         notifyListeners();

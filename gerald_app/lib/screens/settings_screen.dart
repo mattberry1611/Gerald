@@ -171,10 +171,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 Container(height: 1, color: kBorderColor),
                 _InfoRow(
                   label: 'Connection',
-                  value: _connLabel(state.status),
-                  valueColor: _connColor(state.status),
+                  value: state.backendReachable ? 'Connected' : 'Offline',
+                  valueColor: state.backendReachable ? kAccentGreen : kStatusError,
                   icon: Icons.circle,
-                  iconColor: _connColor(state.status),
+                  iconColor: state.backendReachable ? kAccentGreen : kStatusError,
                 ),
                 Container(height: 1, color: kBorderColor),
                 _InfoRow(

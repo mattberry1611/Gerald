@@ -440,6 +440,17 @@ def get_changed_files_under_lib(project_path="/opt/Gerald/gerald_app"):
 
 def is_status_check(text: str) -> bool:
     lower = (text or "").lower()
+
+    # Action/investigation requests may mention "status", "error", or "/status".
+    # They must still route to the correct worker instead of status-check.
+    action_words = [
+        "investigate", "diagnose", "report back",
+        "fix", "change", "update", "implement", "make the",
+        "add ", "remove ", "edit "
+    ]
+    if any(w in lower for w in action_words):
+        return False
+
     phrases = [
         "is claude coding",
         "is code changing",
