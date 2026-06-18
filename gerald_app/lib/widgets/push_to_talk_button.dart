@@ -107,19 +107,28 @@ class _PushToTalkButtonState extends State<PushToTalkButton>
     _resumeScheduled = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _resumeScheduled = false;
-      if (mounted) {
-        final s = context.read<AppState>();
-        if (s.conversationMode && !s.isLoading) {
-          _start();
-        } else if (s.conversationMode && s.isLoading) {
-          // Still loading — retry once after a short delay instead of dropping.
-          Future.delayed(const Duration(milliseconds: 500), () {
-            if (mounted) {
-              final s2 = context.read<AppState>();
-              if (s2.conversationMode && !s2.isLoading) _start();
-            }
-          });
+      if (!mounted) return;
+      final s = context.read<AppState>();
+      if (s.conversationMode && !s.isLoading) {
+        _start();
+      } else if (s.conversationMode && s.isLoading) {
+        // Retry every 300 ms for up to 3 s waiting for isLoading to clear.
+        const retryInterval = Duration(milliseconds: 300);
+        const maxWait = Duration(seconds: 3);
+        final deadline = DateTime.now().add(maxWait);
+        void retry() {
+          if (!mounted) return;
+          final s2 = context.read<AppState>();
+          if (!s2.conversationMode) return;
+          if (!s2.isLoading) {
+            _start();
+            return;
+          }
+          if (DateTime.now().isBefore(deadline)) {
+            Future.delayed(retryInterval, retry);
+          }
         }
+        Future.delayed(retryInterval, retry);
       }
     });
   }
