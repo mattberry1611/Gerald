@@ -68,9 +68,9 @@ class ActivityLog extends StatelessWidget {
                               itemCount: log.length,
                               itemBuilder: (_, i) {
                                 final entry = log[i];
-                                // Split [HH:MM:SS] from the rest
+                                // Split "H:MM AM — " from the rest
                                 final tsMatch =
-                                    RegExp(r'^\[(\d{2}:\d{2}:\d{2})\] (.*)$')
+                                    RegExp(r'^(\d{1,2}:\d{2} (?:AM|PM)) — (.*)$')
                                         .firstMatch(entry);
                                 if (tsMatch == null) {
                                   return Text(
@@ -92,7 +92,7 @@ class ActivityLog extends StatelessWidget {
                                     ),
                                     children: [
                                       TextSpan(
-                                        text: '[${tsMatch.group(1)}] ',
+                                        text: '${tsMatch.group(1)} — ',
                                         style: TextStyle(
                                           color: kAccentBlue.withOpacity(0.5),
                                         ),

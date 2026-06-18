@@ -393,7 +393,7 @@ class _ModeSelector extends StatelessWidget {
                     if (!compact) ...[
                       const SizedBox(height: 3),
                       Text(
-                        'hold to speak',
+                        'One-shot commands',
                         style: TextStyle(
                           color: !convMode
                               ? kAccentBlue.withOpacity(0.65)
@@ -413,6 +413,7 @@ class _ModeSelector extends StatelessWidget {
         Expanded(
           child: GestureDetector(
             onTap: () => state.setConversationMode(true),
+
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 180),
               curve: Curves.easeInOut,
@@ -464,7 +465,7 @@ class _ModeSelector extends StatelessWidget {
                     if (!compact) ...[
                       const SizedBox(height: 3),
                       Text(
-                        'auto-listens',
+                        'Continuous chat',
                         style: TextStyle(
                           color: convMode
                               ? kAccentBlue.withOpacity(0.65)
@@ -478,6 +479,149 @@ class _ModeSelector extends StatelessWidget {
                 ),
               ),
             ),
+          ),
+        ),
+        if (!compact) ...[
+          const SizedBox(width: 6),
+          GestureDetector(
+            onTap: () => _showModeInfo(context),
+            child: Icon(
+              Icons.info_outline_rounded,
+              size: 18,
+              color: kTextSecondary.withOpacity(0.5),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  static void _showModeInfo(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(24, 20, 24, 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Center(
+                child: Container(
+                  width: 36,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: kBorderColor,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 20),
+              const Text(
+                'INPUT MODES',
+                style: TextStyle(
+                  color: kTextSecondary,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 2.5,
+                ),
+              ),
+              const SizedBox(height: 16),
+              const _ModeInfoRow(
+                icon: Icons.touch_app_outlined,
+                title: 'COMMAND',
+                subtitle: 'One-shot voice commands',
+                description:
+                    'Hold the mic button, speak your command, then release. '
+                    'Gerald processes it once. Best for specific, targeted requests.',
+                color: kAccentBlue,
+              ),
+              const SizedBox(height: 16),
+              const _ModeInfoRow(
+                icon: Icons.record_voice_over_outlined,
+                title: 'CONVERSE',
+                subtitle: 'Continuous conversation',
+                description:
+                    'Gerald listens automatically after each response — '
+                    'hands-free back-and-forth. Great for extended sessions.',
+                color: kAccentGreen,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ── Mode info row (used in bottom sheet) ─────────────────────────────────────
+
+class _ModeInfoRow extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final String description;
+  final Color color;
+
+  const _ModeInfoRow({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.description,
+    required this.color,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          width: 38,
+          height: 38,
+          decoration: BoxDecoration(
+            color: color.withOpacity(0.12),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: color.withOpacity(0.3)),
+          ),
+          child: Icon(icon, size: 18, color: color),
+        ),
+        const SizedBox(width: 14),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Text(
+                    title,
+                    style: TextStyle(
+                      color: color,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 1.2,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    subtitle,
+                    style: const TextStyle(
+                      color: kTextSecondary,
+                      fontSize: 11,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 4),
+              Text(
+                description,
+                style: const TextStyle(
+                  color: kTextSecondary,
+                  fontSize: 12,
+                  height: 1.4,
+                ),
+              ),
+            ],
           ),
         ),
       ],
@@ -564,25 +708,6 @@ class _EmptyState extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Container(
-              width: 80,
-              height: 80,
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(18),
-                boxShadow: [
-                  BoxShadow(
-                    color: kAccentBlue.withOpacity(0.20),
-                    blurRadius: 40,
-                    spreadRadius: 10,
-                  ),
-                ],
-              ),
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(18),
-                child: Image.asset('assets/gerald_logo.png', fit: BoxFit.cover),
-              ),
-            ),
-            const SizedBox(height: 24),
             const Text(
               'Ready to assist',
               style: TextStyle(
@@ -594,7 +719,7 @@ class _EmptyState extends StatelessWidget {
             ),
             const SizedBox(height: 8),
             Text(
-              'Push-to-talk or use conversation mode',
+              'Select a mode below, then hold the mic to start',
               style: TextStyle(color: kTextSecondary, fontSize: 13),
             ),
             const SizedBox(height: 32),
@@ -604,7 +729,7 @@ class _EmptyState extends StatelessWidget {
                 _Hint(
                   icon: Icons.touch_app_outlined,
                   label: 'COMMAND',
-                  sub: 'Hold to speak',
+                  sub: 'One-shot commands',
                 ),
                 Container(
                   width: 1,
@@ -615,7 +740,7 @@ class _EmptyState extends StatelessWidget {
                 _Hint(
                   icon: Icons.record_voice_over_outlined,
                   label: 'CONVERSE',
-                  sub: 'Auto-listens',
+                  sub: 'Continuous chat',
                 ),
               ],
             ),
@@ -694,44 +819,52 @@ class _ApkButton extends StatelessWidget {
       onTap = () => state.triggerBuildVerification();
     }
 
-    return GestureDetector(
-      onTap: onTap,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 200),
-        curve: Curves.easeInOut,
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-        decoration: BoxDecoration(
-          color: onTap != null ? color.withOpacity(0.10) : kSurface2,
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(
-            color: onTap != null ? color.withOpacity(0.35) : kBorderColor,
-          ),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (busy)
-              SizedBox(
-                width: 13,
-                height: 13,
-                child: CircularProgressIndicator(
-                  strokeWidth: 1.8,
-                  color: kAccentBlue,
-                ),
-              )
-            else
-              Icon(icon, size: 13, color: onTap != null ? color : kTextMuted),
-            const SizedBox(width: 6),
-            Text(
-              label,
-              style: TextStyle(
-                fontSize: 11,
-                fontWeight: FontWeight.w700,
-                letterSpacing: 1.0,
-                color: onTap != null ? color : kTextMuted,
-              ),
+    final projectName = state.selectedProject;
+    final tooltipMsg = projectName != null
+        ? 'Build and download the APK for $projectName'
+        : 'Build and download the APK';
+
+    return Tooltip(
+      message: tooltipMsg,
+      child: GestureDetector(
+        onTap: onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          curve: Curves.easeInOut,
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          decoration: BoxDecoration(
+            color: onTap != null ? color.withOpacity(0.10) : kSurface2,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(
+              color: onTap != null ? color.withOpacity(0.35) : kBorderColor,
             ),
-          ],
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (busy)
+                SizedBox(
+                  width: 13,
+                  height: 13,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 1.8,
+                    color: kAccentBlue,
+                  ),
+                )
+              else
+                Icon(icon, size: 13, color: onTap != null ? color : kTextMuted),
+              const SizedBox(width: 6),
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 1.0,
+                  color: onTap != null ? color : kTextMuted,
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );

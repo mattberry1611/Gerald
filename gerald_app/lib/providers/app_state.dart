@@ -185,7 +185,7 @@ class AppState extends ChangeNotifier {
       if (next != _status) {
         final prev = _status;
         _status = next;
-        _log('Status → ${_statusLabel(_status)}');
+        _log(_friendlyStatusLog(next));
 
         if (next == GeraldStatus.planning || next == GeraldStatus.executing) {
           if (_taskStage == TaskStage.sending ||
@@ -655,11 +655,21 @@ class AppState extends ChangeNotifier {
 
   void _log(String entry) {
     final t = DateTime.now();
-    final ts =
-        '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}:${t.second.toString().padLeft(2, '0')}';
-    _activityLog.insert(0, '[$ts] $entry');
+    final hour = t.hour > 12 ? t.hour - 12 : (t.hour == 0 ? 12 : t.hour);
+    final period = t.hour >= 12 ? 'PM' : 'AM';
+    final ts = '$hour:${t.minute.toString().padLeft(2, '0')} $period';
+    _activityLog.insert(0, '$ts — $entry');
     if (_activityLog.length > 50) _activityLog.removeLast();
   }
+
+  String _friendlyStatusLog(GeraldStatus s) => switch (s) {
+    GeraldStatus.idle      => 'Gerald is ready',
+    GeraldStatus.planning  => 'Gerald is planning...',
+    GeraldStatus.awaiting  => 'Awaiting your approval',
+    GeraldStatus.executing => 'Gerald is working...',
+    GeraldStatus.error     => 'Something went wrong',
+    GeraldStatus.offline   => 'Backend offline',
+  };
 
   String _shortLabel(String s) =>
       s.length > 40 ? '${s.substring(0, 40)}...' : s;
