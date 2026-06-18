@@ -113,7 +113,8 @@ class HomeScreen extends StatelessWidget {
               ),
             ),
             const SizedBox(width: 12),
-            Column(
+            Flexible(
+              child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -136,6 +137,7 @@ class HomeScreen extends StatelessWidget {
                   ),
                 ),
               ],
+            ),
             ),
           ],
         ),
