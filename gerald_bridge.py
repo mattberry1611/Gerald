@@ -590,7 +590,8 @@ Rules:
             cwd=project_path,
             capture_output=True,
             text=True,
-            timeout=600,
+            timeout=180,
+            start_new_session=True,
         )
 
         output = result.stdout.strip()
@@ -626,7 +627,11 @@ Rules:
         )
 
     except subprocess.TimeoutExpired:
-        err = "Read-only investigation timed out"
+        try:
+            subprocess.run(["pkill", "-f", "gerald_readonly_investigation_prompt"], timeout=10)
+        except Exception:
+            pass
+        err = "Read-only investigation timed out after 180 seconds"
         data = {
             "task": task_text,
             "project": project_name,
