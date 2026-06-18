@@ -73,6 +73,18 @@ class BuildResult {
         flavor: 'debug',
       );
 
+  static BuildResult apkAvailable() => const BuildResult(
+        status: BuildStatus.success,
+        errorCount: 0,
+        warningCount: 0,
+        durationS: 0,
+        output: '',
+        errors: [],
+        warnings: [],
+        timestamp: '',
+        flavor: 'debug',
+      );
+
   String get statusLabel {
     switch (status) {
       case BuildStatus.neverRun:

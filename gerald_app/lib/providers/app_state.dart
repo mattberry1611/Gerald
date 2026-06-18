@@ -152,6 +152,7 @@ class AppState extends ChangeNotifier {
     notifyListeners();
     _startPolling();
     _fetchProjects();
+    refreshBuildStatus();
 
     // Load brain for the persisted project if any
     if (_selectedProject != null) {
@@ -794,6 +795,9 @@ class AppState extends ChangeNotifier {
         _buildResult = BuildResult.fromJson(data);
         notifyListeners();
         if (!isRunning) {
+          if (_buildResult.status == BuildStatus.neverRun) {
+            await _applyApkStatusIfAvailable();
+          }
           final label = _buildResult.statusLabel;
           _log('Build result: $label (${_buildResult.errorCount} errors, ${_buildResult.warningCount} warnings)');
           if (_ttsEnabled) {
@@ -812,7 +816,19 @@ class AppState extends ChangeNotifier {
     try {
       final data = await _api.getBuildStatus();
       _buildResult = BuildResult.fromJson(data);
+      if (_buildResult.status == BuildStatus.neverRun) {
+        await _applyApkStatusIfAvailable();
+      }
       notifyListeners();
+    } catch (_) {}
+  }
+
+  Future<void> _applyApkStatusIfAvailable() async {
+    try {
+      final apkData = await _api.getApkStatus();
+      if (apkData['available'] == true) {
+        _buildResult = BuildResult.apkAvailable();
+      }
     } catch (_) {}
   }
 

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../providers/app_state.dart';
 import '../services/build_verification_service.dart';
 import '../theme.dart';
@@ -9,7 +10,6 @@ import '../widgets/message_bubble.dart';
 import '../widgets/status_panel.dart';
 import '../widgets/activity_log.dart';
 import '../widgets/project_selector.dart';
-import '../widgets/text_input_bar.dart';
 import 'settings_screen.dart';
 
 class HomeScreen extends StatelessWidget {
@@ -26,9 +26,9 @@ class HomeScreen extends StatelessWidget {
     return Scaffold(
       resizeToAvoidBottomInset: true,
       backgroundColor: kBgColor,
-      appBar: _buildAppBar(context),
+      appBar: _buildAppBar(context, state),
       body: SafeArea(
-        bottom: false, // We handle bottom padding manually
+        bottom: false,
         child: Column(
           children: [
             // Gradient separator
@@ -45,9 +45,13 @@ class HomeScreen extends StatelessWidget {
               ),
             ),
 
-            const StatusPanel(),
+            // Status panel — hidden when idle with no active task
+            if (state.status != GeraldStatus.idle ||
+                state.hasActiveTask ||
+                state.isSpeaking)
+              const StatusPanel(),
 
-            // Conversation area (fills remaining space)
+            // Conversation area
             Expanded(
               child: state.messages.isEmpty
                   ? const _EmptyState()
@@ -63,26 +67,22 @@ class HomeScreen extends StatelessWidget {
                     ),
             ),
 
-            // Text input bar (optional)
-            if (state.showTextInput) const TextInputBar(),
-
-            // Bottom section — adapts to keyboard + screen size
-            if (keyboardVisible)
-              _CompactBar(state: state)
-            else
-              _BottomSection(
-                state: state,
-                bottomPad: bottomPad,
-                screenH: screenH,
-                showTextInput: state.showTextInput,
-              ),
+            // Unified TYPE / SPEAK input section
+            _InputSection(
+              state: state,
+              bottomPad: bottomPad,
+              screenH: screenH,
+              keyboardVisible: keyboardVisible,
+            ),
           ],
         ),
       ),
     );
   }
 
-  PreferredSizeWidget _buildAppBar(BuildContext context) {
+  PreferredSizeWidget _buildAppBar(BuildContext context, AppState state) {
+    final isIdle = state.status == GeraldStatus.idle && !state.isSpeaking;
+
     return AppBar(
       toolbarHeight: 62,
       titleSpacing: 0,
@@ -116,29 +116,55 @@ class HomeScreen extends StatelessWidget {
             const SizedBox(width: 12),
             Flexible(
               child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Text(
-                  'GERALD',
-                  style: TextStyle(
-                    fontWeight: FontWeight.w900,
-                    letterSpacing: 5,
-                    fontSize: 20,
-                    color: kTextPrimary,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text(
+                    'GERALD',
+                    style: TextStyle(
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: 5,
+                      fontSize: 20,
+                      color: kTextPrimary,
+                    ),
                   ),
-                ),
-                Text(
-                  'AI CODING SUPERVISOR',
-                  style: TextStyle(
-                    fontSize: 8.5,
-                    letterSpacing: 2.5,
-                    color: kAccentBlue.withOpacity(0.7),
-                    fontWeight: FontWeight.w500,
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        'AI CODING SUPERVISOR',
+                        style: TextStyle(
+                          fontSize: 8.5,
+                          letterSpacing: 2.5,
+                          color: kAccentBlue.withOpacity(0.7),
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                      if (isIdle) ...[
+                        const SizedBox(width: 7),
+                        Container(
+                          width: 5,
+                          height: 5,
+                          decoration: const BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: kStatusIdle,
+                          ),
+                        ),
+                        const SizedBox(width: 3),
+                        const Text(
+                          'IDLE',
+                          style: TextStyle(
+                            fontSize: 7.5,
+                            letterSpacing: 1.5,
+                            color: kStatusIdle,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ],
+                    ],
                   ),
-                ),
-              ],
-            ),
+                ],
+              ),
             ),
           ],
         ),
@@ -161,36 +187,290 @@ class HomeScreen extends StatelessWidget {
   }
 }
 
-// ── Bottom section (adaptive) ─────────────────────────────────────────────────
+// ── Input section (unified TYPE / SPEAK) ──────────────────────────────────────
 
-class _BottomSection extends StatelessWidget {
+class _InputSection extends StatefulWidget {
   final AppState state;
   final double bottomPad;
   final double screenH;
-  final bool showTextInput;
+  final bool keyboardVisible;
 
-  const _BottomSection({
+  const _InputSection({
     required this.state,
     required this.bottomPad,
     required this.screenH,
-    required this.showTextInput,
+    required this.keyboardVisible,
   });
 
   @override
-  Widget build(BuildContext context) {
-    // On small screens or when text input is open, omit activity log
-    final isSmall = screenH < 620 || showTextInput;
+  State<_InputSection> createState() => _InputSectionState();
+}
 
-    if (isSmall) {
-      return _VoiceSection(state: state, bottomPad: bottomPad);
+class _InputSectionState extends State<_InputSection> {
+  bool _speakMode = false;
+  final _controller = TextEditingController();
+  final _focusNode = FocusNode();
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _focusNode.requestFocus();
+    });
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    _focusNode.dispose();
+    super.dispose();
+  }
+
+  void _send() {
+    final text = _controller.text.trim();
+    if (text.isEmpty) return;
+    _controller.clear();
+    _focusNode.requestFocus();
+    widget.state.sendPrompt(text);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final state = widget.state;
+    final isSmall = widget.screenH < 620;
+    final vPad = isSmall ? 8.0 : 10.0;
+
+    // When keyboard is up, just show the text field + compact utility bar.
+    if (widget.keyboardVisible) {
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 6, 12, 0),
+            child: _buildTextField(state),
+          ),
+          _CompactBar(state: state),
+        ],
+      );
     }
 
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        const ActivityLog(),
-        _VoiceSection(state: state, bottomPad: bottomPad),
+        if (!isSmall) const ActivityLog(),
+        Container(
+          decoration: BoxDecoration(
+            color: kSurfaceColor,
+            border: Border(top: BorderSide(color: kBorderColor)),
+          ),
+          padding: EdgeInsets.fromLTRB(16, vPad, 16, widget.bottomPad + vPad),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // TYPE | SPEAK top-level toggle
+              _buildInputToggle(isSmall),
+              const SizedBox(height: 10),
+              // Active input
+              if (_speakMode)
+                _buildSpeakContent(state, isSmall)
+              else
+                _buildTextField(state),
+              SizedBox(height: isSmall ? 8.0 : 10.0),
+              _UtilitySubRow(state: state),
+              SizedBox(height: isSmall ? 2.0 : 4.0),
+            ],
+          ),
+        ),
       ],
+    );
+  }
+
+  Widget _buildInputToggle(bool isSmall) {
+    final height = isSmall ? 34.0 : 40.0;
+    final fontSize = isSmall ? 9.0 : 10.0;
+
+    return Container(
+      height: height,
+      padding: const EdgeInsets.all(3),
+      decoration: BoxDecoration(
+        color: kSurface2,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: kBorderColor),
+      ),
+      child: Row(
+        children: [
+          _InputToggleSegment(
+            label: 'TYPE',
+            icon: Icons.keyboard_outlined,
+            active: !_speakMode,
+            fontSize: fontSize,
+            onTap: () {
+              setState(() => _speakMode = false);
+              Future.microtask(() => _focusNode.requestFocus());
+            },
+          ),
+          _InputToggleSegment(
+            label: 'SPEAK',
+            icon: Icons.mic_none_rounded,
+            active: _speakMode,
+            fontSize: fontSize,
+            onTap: () => setState(() => _speakMode = true),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTextField(AppState state) {
+    final loading = state.isLoading;
+
+    return Container(
+      decoration: BoxDecoration(
+        color: kSurface2,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: kAccentBlue.withOpacity(0.65), width: 1.5),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          Expanded(
+            child: TextField(
+              controller: _controller,
+              focusNode: _focusNode,
+              autofocus: true,
+              minLines: 1,
+              maxLines: 4,
+              style: const TextStyle(
+                fontSize: 14,
+                color: kTextPrimary,
+                height: 1.4,
+              ),
+              decoration: InputDecoration(
+                hintText: 'Type a message to Gerald…',
+                hintStyle: TextStyle(color: Colors.white.withOpacity(0.38), fontSize: 14),
+                border: InputBorder.none,
+                enabledBorder: InputBorder.none,
+                focusedBorder: InputBorder.none,
+                filled: false,
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 12,
+                ),
+                isDense: true,
+              ),
+              onSubmitted: (_) => _send(),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(4, 0, 6, 6),
+            child: Tooltip(
+              message: 'Send message',
+              child: GestureDetector(
+                onTap: loading ? null : _send,
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 150),
+                  width: 36,
+                  height: 36,
+                  decoration: BoxDecoration(
+                    color: loading ? kBorderColor : kAccentBlue,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Icon(
+                    Icons.send_rounded,
+                    size: 18,
+                    color: loading ? kTextMuted : Colors.white,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSpeakContent(AppState state, bool isSmall) {
+    final convMode = state.conversationMode;
+    final microcopy = convMode
+        ? 'Gerald listens automatically after each reply'
+        : 'Hold the mic button, speak, then release to send';
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _ModeSelector(state: state, compact: isSmall),
+        const SizedBox(height: 6),
+        Text(
+          microcopy,
+          style: TextStyle(
+            fontSize: 10,
+            color: kTextSecondary.withOpacity(0.8),
+            height: 1.3,
+          ),
+          textAlign: TextAlign.center,
+        ),
+        SizedBox(height: isSmall ? 8.0 : 12.0),
+        const PushToTalkButton(),
+        SizedBox(height: isSmall ? 6.0 : 8.0),
+      ],
+    );
+  }
+}
+
+// ── Input toggle segment ──────────────────────────────────────────────────────
+
+class _InputToggleSegment extends StatelessWidget {
+  final String label;
+  final IconData icon;
+  final bool active;
+  final double fontSize;
+  final VoidCallback onTap;
+
+  const _InputToggleSegment({
+    required this.label,
+    required this.icon,
+    required this.active,
+    required this.fontSize,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Expanded(
+      child: GestureDetector(
+        onTap: onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 160),
+          curve: Curves.easeInOut,
+          decoration: BoxDecoration(
+            color: active ? kAccentBlue.withOpacity(0.18) : Colors.transparent,
+            borderRadius: BorderRadius.circular(7),
+            border: active
+                ? Border.all(color: kAccentBlue.withOpacity(0.55))
+                : null,
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                icon,
+                size: 11,
+                color: active ? kAccentBlue : kTextSecondary,
+              ),
+              const SizedBox(width: 4),
+              Text(
+                label,
+                style: TextStyle(
+                  color: active ? kAccentBlue : kTextSecondary,
+                  fontSize: fontSize,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 1.0,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
@@ -212,15 +492,6 @@ class _CompactBar extends StatelessWidget {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceEvenly,
         children: [
-          _UtilityButton(
-            icon: state.showTextInput
-                ? Icons.keyboard_hide_rounded
-                : Icons.keyboard_alt_outlined,
-            active: state.showTextInput,
-            activeColor: kAccentBlue,
-            tooltip: 'Text input',
-            onPressed: state.toggleTextInput,
-          ),
           _UtilityButton(
             icon: Icons.attach_file_rounded,
             tooltip: 'Attach image',
@@ -245,85 +516,7 @@ class _CompactBar extends StatelessWidget {
   }
 }
 
-// ── Full voice section ────────────────────────────────────────────────────────
-
-class _VoiceSection extends StatelessWidget {
-  final AppState state;
-  final double bottomPad;
-  const _VoiceSection({required this.state, required this.bottomPad});
-
-  @override
-  Widget build(BuildContext context) {
-    final screenH = MediaQuery.of(context).size.height;
-    final isSmall = screenH < 620;
-    final vPad = isSmall ? 10.0 : 14.0;
-    final midGap = isSmall ? 10.0 : 16.0;
-
-    return Container(
-      decoration: BoxDecoration(
-        color: kSurfaceColor,
-        border: Border(top: BorderSide(color: kBorderColor)),
-      ),
-      padding: EdgeInsets.fromLTRB(16, vPad, 16, bottomPad + vPad),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          // Mode selector
-          _ModeSelector(state: state, compact: isSmall),
-          SizedBox(height: midGap),
-
-          // Voice control
-          const PushToTalkButton(),
-          SizedBox(height: isSmall ? 10.0 : 14.0),
-
-          // Utility row
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-            children: [
-              _UtilityButton(
-                icon: state.showTextInput
-                    ? Icons.keyboard_hide_rounded
-                    : Icons.keyboard_alt_outlined,
-                active: state.showTextInput,
-                activeColor: kAccentBlue,
-                tooltip: 'Text input',
-                label: 'Text',
-                onPressed: state.toggleTextInput,
-              ),
-              _UtilityButton(
-                icon: Icons.attach_file_rounded,
-                tooltip: 'Attach image',
-                label: 'Attach',
-                onPressed: () => _pickImage(context, state),
-              ),
-              if (state.isSpeaking)
-                _UtilityButton(
-                  icon: Icons.stop_circle_outlined,
-                  active: true,
-                  activeColor: kAccentPurple,
-                  tooltip: 'Stop speaking',
-                  label: 'Stop',
-                  onPressed: state.stopSpeaking,
-                ),
-              _UtilityButton(
-                icon: Icons.delete_sweep_outlined,
-                tooltip: 'Clear conversation',
-                label: 'Clear',
-                onPressed: () => _confirmClear(context, state),
-              ),
-            ],
-          ),
-          SizedBox(height: isSmall ? 6.0 : 8.0),
-
-          // APK build / download button
-          const _ApkButton(),
-        ],
-      ),
-    );
-  }
-}
-
-// ── Mode selector ─────────────────────────────────────────────────────────────
+// ── Mode selector (COMMAND / CONVERSE — shown only in SPEAK mode) ─────────────
 
 class _ModeSelector extends StatelessWidget {
   final AppState state;
@@ -333,157 +526,114 @@ class _ModeSelector extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final convMode = state.conversationMode;
-    final height = compact ? 36.0 : 52.0;
-    final radius = compact ? 8.0 : 10.0;
+    final height = compact ? 34.0 : 40.0;
     final fontSize = compact ? 9.0 : 10.0;
 
     return Row(
       children: [
         Expanded(
-          child: GestureDetector(
-            onTap: () => state.setConversationMode(false),
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 180),
-              curve: Curves.easeInOut,
-              height: height,
-              decoration: BoxDecoration(
-                color: !convMode
-                    ? kAccentBlue.withOpacity(0.14)
-                    : kSurface2,
-                borderRadius: BorderRadius.circular(radius),
-                border: Border.all(
-                  color: !convMode
-                      ? kAccentBlue.withOpacity(0.55)
-                      : kBorderColor,
-                  width: !convMode ? 1.5 : 1,
-                ),
-                boxShadow: !convMode
-                    ? [
-                        BoxShadow(
-                          color: kAccentBlue.withOpacity(0.12),
-                          blurRadius: 8,
-                        )
-                      ]
-                    : null,
-              ),
-              child: Center(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(
-                          Icons.touch_app_outlined,
-                          size: 12,
-                          color: !convMode ? kAccentBlue : kTextSecondary,
-                        ),
-                        const SizedBox(width: 4),
-                        Text(
-                          'COMMAND',
-                          style: TextStyle(
-                            color: !convMode ? kAccentBlue : kTextSecondary,
-                            fontSize: fontSize,
-                            fontWeight: FontWeight.w700,
-                            letterSpacing: 1.2,
-                          ),
-                        ),
-                      ],
-                    ),
-                    if (!compact) ...[
-                      const SizedBox(height: 3),
-                      Text(
-                        'One-shot commands',
-                        style: TextStyle(
+          child: Container(
+            height: height,
+            padding: const EdgeInsets.all(3),
+            decoration: BoxDecoration(
+              color: kSurface2,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: kBorderColor),
+            ),
+            child: Row(
+              children: [
+                // COMMAND segment
+                Expanded(
+                  child: Tooltip(
+                    message: 'COMMAND — Hold mic, speak your instruction, release to send',
+                    child: GestureDetector(
+                      onTap: () => state.setConversationMode(false),
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 160),
+                        curve: Curves.easeInOut,
+                        decoration: BoxDecoration(
                           color: !convMode
-                              ? kAccentBlue.withOpacity(0.65)
-                              : kTextMuted,
-                          fontSize: 9,
-                          letterSpacing: 0.3,
+                              ? kAccentBlue.withOpacity(0.22)
+                              : Colors.transparent,
+                          borderRadius: BorderRadius.circular(7),
+                          border: !convMode
+                              ? Border.all(color: kAccentBlue.withOpacity(0.65))
+                              : null,
+                        ),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(
+                              Icons.touch_app_outlined,
+                              size: 11,
+                              color: !convMode ? kAccentBlue : kTextSecondary,
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              'COMMAND',
+                              style: TextStyle(
+                                color: !convMode ? kAccentBlue : kTextSecondary,
+                                fontSize: fontSize,
+                                fontWeight: FontWeight.w700,
+                                letterSpacing: 1.0,
+                              ),
+                            ),
+                          ],
                         ),
                       ),
-                    ],
-                  ],
-                ),
-              ),
-            ),
-          ),
-        ),
-        const SizedBox(width: 8),
-        Expanded(
-          child: GestureDetector(
-            onTap: () => state.setConversationMode(true),
-
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 180),
-              curve: Curves.easeInOut,
-              height: height,
-              decoration: BoxDecoration(
-                color: convMode
-                    ? kAccentBlue.withOpacity(0.14)
-                    : kSurface2,
-                borderRadius: BorderRadius.circular(radius),
-                border: Border.all(
-                  color: convMode
-                      ? kAccentBlue.withOpacity(0.55)
-                      : kBorderColor,
-                  width: convMode ? 1.5 : 1,
-                ),
-                boxShadow: convMode
-                    ? [
-                        BoxShadow(
-                          color: kAccentBlue.withOpacity(0.12),
-                          blurRadius: 8,
-                        )
-                      ]
-                    : null,
-              ),
-              child: Center(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(
-                          Icons.record_voice_over_outlined,
-                          size: 12,
-                          color: convMode ? kAccentBlue : kTextSecondary,
-                        ),
-                        const SizedBox(width: 4),
-                        Text(
-                          'CONVERSE',
-                          style: TextStyle(
-                            color: convMode ? kAccentBlue : kTextSecondary,
-                            fontSize: fontSize,
-                            fontWeight: FontWeight.w700,
-                            letterSpacing: 1.2,
-                          ),
-                        ),
-                      ],
                     ),
-                    if (!compact) ...[
-                      const SizedBox(height: 3),
-                      Text(
-                        'Continuous chat',
-                        style: TextStyle(
+                  ),
+                ),
+                // CONVERSE segment
+                Expanded(
+                  child: Tooltip(
+                    message: 'CONVERSE — Gerald listens automatically after each reply',
+                    child: GestureDetector(
+                      onTap: () => state.setConversationMode(true),
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 160),
+                        curve: Curves.easeInOut,
+                        decoration: BoxDecoration(
                           color: convMode
-                              ? kAccentBlue.withOpacity(0.65)
-                              : kTextMuted,
-                          fontSize: 9,
-                          letterSpacing: 0.3,
+                              ? kAccentBlue.withOpacity(0.22)
+                              : Colors.transparent,
+                          borderRadius: BorderRadius.circular(7),
+                          border: convMode
+                              ? Border.all(color: kAccentBlue.withOpacity(0.65))
+                              : null,
+                        ),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(
+                              Icons.record_voice_over_outlined,
+                              size: 11,
+                              color: convMode ? kAccentBlue : kTextSecondary,
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              'CONVERSE',
+                              style: TextStyle(
+                                color: convMode ? kAccentBlue : kTextSecondary,
+                                fontSize: fontSize,
+                                fontWeight: FontWeight.w700,
+                                letterSpacing: 1.0,
+                              ),
+                            ),
+                          ],
                         ),
                       ),
-                    ],
-                  ],
+                    ),
+                  ),
                 ),
-              ),
+              ],
             ),
           ),
         ),
-        if (!compact) ...[
-          const SizedBox(width: 6),
-          GestureDetector(
+        const SizedBox(width: 6),
+        Tooltip(
+          message: 'About input modes',
+          child: GestureDetector(
             onTap: () => _showModeInfo(context),
             child: Icon(
               Icons.info_outline_rounded,
@@ -491,7 +641,7 @@ class _ModeSelector extends StatelessWidget {
               color: kTextSecondary.withOpacity(0.5),
             ),
           ),
-        ],
+        ),
       ],
     );
   }
@@ -518,7 +668,7 @@ class _ModeSelector extends StatelessWidget {
               ),
               const SizedBox(height: 20),
               const Text(
-                'INPUT MODES',
+                'VOICE MODES',
                 style: TextStyle(
                   color: kTextSecondary,
                   fontSize: 10,
@@ -629,6 +779,132 @@ class _ModeInfoRow extends StatelessWidget {
   }
 }
 
+// ── Utility sub-row: Attach | Clear | Build APK ───────────────────────────────
+
+class _UtilitySubRow extends StatelessWidget {
+  final AppState state;
+  const _UtilitySubRow({required this.state});
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceAround,
+      children: [
+        _UtilityButton(
+          icon: Icons.attach_file_rounded,
+          tooltip: 'Attach image',
+          label: 'Attach',
+          onPressed: () => _pickImage(context, state),
+        ),
+        _UtilityButton(
+          icon: Icons.delete_sweep_outlined,
+          tooltip: 'Clear conversation',
+          label: 'Clear',
+          onPressed: () => _confirmClear(context, state),
+        ),
+        const _ApkChip(),
+      ],
+    );
+  }
+}
+
+// ── APK chip (inline, grayed when unavailable) ────────────────────────────────
+
+class _ApkChip extends StatelessWidget {
+  const _ApkChip();
+
+  @override
+  Widget build(BuildContext context) {
+    final state = context.watch<AppState>();
+    final result = state.buildResult;
+    final busy = state.buildTriggering || result.status == BuildStatus.running;
+    final hasProject = state.selectedProject != null;
+
+    final String label;
+    final IconData icon;
+    final Color color;
+    final VoidCallback? onTap;
+
+    if (!hasProject) {
+      label = 'Build APK';
+      icon = Icons.android_rounded;
+      color = kTextMuted;
+      onTap = () => ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Select a project first')),
+          );
+    } else if (busy) {
+      label = 'Building…';
+      icon = Icons.hourglass_top_rounded;
+      color = kAccentBlue;
+      onTap = null;
+    } else if (result.status == BuildStatus.success) {
+      label = 'Download APK';
+      icon = Icons.check_circle_rounded;
+      color = kAccentGreen;
+      onTap = () => _onDownload(context, state);
+    } else if (result.status == BuildStatus.failed ||
+        result.status == BuildStatus.timeout) {
+      label = 'Retry Build';
+      icon = Icons.refresh_rounded;
+      color = kStatusError;
+      onTap = () => state.triggerBuildVerification();
+    } else {
+      label = 'Build APK';
+      icon = Icons.android_rounded;
+      color = kAccentBlue;
+      onTap = () => state.triggerBuildVerification();
+    }
+
+    final tooltipMsg = !hasProject
+        ? 'Select a project to enable build'
+        : 'Build APK for ${state.selectedProject}';
+
+    return Tooltip(
+      message: tooltipMsg,
+      child: GestureDetector(
+        onTap: onTap,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (busy)
+              SizedBox(
+                width: 13,
+                height: 13,
+                child: CircularProgressIndicator(
+                  strokeWidth: 1.8,
+                  color: kAccentBlue,
+                ),
+              )
+            else
+              Icon(icon, size: 14, color: color),
+            const SizedBox(width: 5),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                color: color,
+                letterSpacing: 0.3,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _onDownload(BuildContext context, AppState state) async {
+    final uri = Uri.parse('${state.baseUrl}/apk-latest/download');
+    if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not open browser — URL: $uri')),
+        );
+      }
+    }
+  }
+}
+
 // ── Utility button ────────────────────────────────────────────────────────────
 
 class _UtilityButton extends StatelessWidget {
@@ -719,8 +995,9 @@ class _EmptyState extends StatelessWidget {
             ),
             const SizedBox(height: 8),
             Text(
-              'Select a mode below, then hold the mic to start',
+              'Switch between typing and speaking with the toggle below',
               style: TextStyle(color: kTextSecondary, fontSize: 13),
+              textAlign: TextAlign.center,
             ),
             const SizedBox(height: 32),
             Row(
@@ -729,7 +1006,7 @@ class _EmptyState extends StatelessWidget {
                 _Hint(
                   icon: Icons.touch_app_outlined,
                   label: 'COMMAND',
-                  sub: 'One-shot commands',
+                  sub: 'Hold mic to send',
                 ),
                 Container(
                   width: 1,
@@ -740,7 +1017,7 @@ class _EmptyState extends StatelessWidget {
                 _Hint(
                   icon: Icons.record_voice_over_outlined,
                   label: 'CONVERSE',
-                  sub: 'Continuous chat',
+                  sub: 'Auto-listen mode',
                 ),
               ],
             ),
@@ -780,104 +1057,6 @@ class _Hint extends StatelessWidget {
   }
 }
 
-// ── APK build button ──────────────────────────────────────────────────────────
-
-class _ApkButton extends StatelessWidget {
-  const _ApkButton();
-
-  @override
-  Widget build(BuildContext context) {
-    final state = context.watch<AppState>();
-    final result = state.buildResult;
-    final busy = state.buildTriggering || result.status == BuildStatus.running;
-
-    final String label;
-    final IconData icon;
-    final Color color;
-    final VoidCallback? onTap;
-
-    if (busy) {
-      label = 'Building...';
-      icon = Icons.hourglass_top_rounded;
-      color = kAccentBlue;
-      onTap = null;
-    } else if (result.status == BuildStatus.success) {
-      label = 'Download APK';
-      icon = Icons.download_rounded;
-      color = kAccentGreen;
-      onTap = () => _onDownload(context, state);
-    } else if (result.status == BuildStatus.failed ||
-        result.status == BuildStatus.timeout) {
-      label = 'Retry';
-      icon = Icons.refresh_rounded;
-      color = kStatusError;
-      onTap = () => state.triggerBuildVerification();
-    } else {
-      label = 'Build APK';
-      icon = Icons.android_rounded;
-      color = kAccentBlue;
-      onTap = () => state.triggerBuildVerification();
-    }
-
-    final projectName = state.selectedProject;
-    final tooltipMsg = projectName != null
-        ? 'Build and download the APK for $projectName'
-        : 'Build and download the APK';
-
-    return Tooltip(
-      message: tooltipMsg,
-      child: GestureDetector(
-        onTap: onTap,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 200),
-          curve: Curves.easeInOut,
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-          decoration: BoxDecoration(
-            color: onTap != null ? color.withOpacity(0.10) : kSurface2,
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(
-              color: onTap != null ? color.withOpacity(0.35) : kBorderColor,
-            ),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (busy)
-                SizedBox(
-                  width: 13,
-                  height: 13,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 1.8,
-                    color: kAccentBlue,
-                  ),
-                )
-              else
-                Icon(icon, size: 13, color: onTap != null ? color : kTextMuted),
-              const SizedBox(width: 6),
-              Text(
-                label,
-                style: TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: 1.0,
-                  color: onTap != null ? color : kTextMuted,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  void _onDownload(BuildContext context, AppState state) {
-    final url = '${state.baseUrl}/apk-latest/download';
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('APK ready — open in browser: $url')),
-    );
-  }
-}
-
 // ── Shared helpers ────────────────────────────────────────────────────────────
 
 Future<void> _pickImage(BuildContext context, AppState state) async {
@@ -913,7 +1092,8 @@ Future<void> _pickImage(BuildContext context, AppState state) async {
             onTap: () => Navigator.pop(ctx, ImageSource.camera),
           ),
           ListTile(
-            leading: const Icon(Icons.photo_library_outlined, color: kAccentBlue),
+            leading:
+                const Icon(Icons.photo_library_outlined, color: kAccentBlue),
             title: const Text('Gallery'),
             onTap: () => Navigator.pop(ctx, ImageSource.gallery),
           ),

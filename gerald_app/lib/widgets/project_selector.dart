@@ -14,60 +14,77 @@ class ProjectSelector extends StatelessWidget {
     final hasProject = state.selectedProject != null;
     final hasBrain = state.hasBrain;
 
-    return GestureDetector(
-      onTap: () => _showPicker(context, state),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-        decoration: BoxDecoration(
-          color: kSurface2,
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(
-            color: hasProject ? kAccentBlue.withOpacity(0.4) : kBorderColor,
+    return Tooltip(
+      message: hasProject
+          ? 'Project: ${state.selectedProject}'
+          : 'Select a project',
+      child: GestureDetector(
+        onTap: () => _showPicker(context, state),
+        child: Container(
+          constraints: const BoxConstraints(maxWidth: 130),
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          decoration: BoxDecoration(
+            color: kSurfaceColor,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(
+              color: hasProject
+                  ? kAccentBlue.withOpacity(0.25)
+                  : kBorderColor,
+            ),
           ),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Stack(
-              clipBehavior: Clip.none,
-              children: [
-                Icon(
-                  Icons.folder_outlined,
-                  size: 12,
-                  color: hasProject ? kAccentBlue : kTextSecondary,
-                ),
-                if (hasProject && hasBrain)
-                  Positioned(
-                    top: -2,
-                    right: -2,
-                    child: Container(
-                      width: 5,
-                      height: 5,
-                      decoration: const BoxDecoration(
-                        color: kAccentGreen,
-                        shape: BoxShape.circle,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  Icon(
+                    Icons.folder_outlined,
+                    size: 12,
+                    color: hasProject
+                        ? kAccentBlue.withOpacity(0.85)
+                        : kTextSecondary,
+                  ),
+                  if (hasProject && hasBrain)
+                    Positioned(
+                      top: -2,
+                      right: -2,
+                      child: Container(
+                        width: 5,
+                        height: 5,
+                        decoration: const BoxDecoration(
+                          color: kAccentGreen,
+                          shape: BoxShape.circle,
+                        ),
                       ),
                     ),
-                  ),
-              ],
-            ),
-            const SizedBox(width: 5),
-            Text(
-              state.selectedProject ?? 'Project',
-              style: TextStyle(
-                fontSize: 11,
-                fontWeight: FontWeight.w600,
-                color: hasProject ? kAccentBlue : kTextSecondary,
-                letterSpacing: 0.2,
+                ],
               ),
-            ),
-            const SizedBox(width: 2),
-            Icon(
-              Icons.keyboard_arrow_down_rounded,
-              size: 14,
-              color: hasProject ? kAccentBlue : kTextSecondary,
-            ),
-          ],
+              const SizedBox(width: 5),
+              Flexible(
+                child: Text(
+                  state.selectedProject ?? 'Project',
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 10.5,
+                    fontWeight: FontWeight.w500,
+                    color: hasProject
+                        ? kAccentBlue.withOpacity(0.85)
+                        : kTextSecondary,
+                    letterSpacing: 0.2,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 2),
+              Icon(
+                Icons.keyboard_arrow_down_rounded,
+                size: 13,
+                color: hasProject
+                    ? kAccentBlue.withOpacity(0.7)
+                    : kTextSecondary,
+              ),
+            ],
+          ),
         ),
       ),
     );

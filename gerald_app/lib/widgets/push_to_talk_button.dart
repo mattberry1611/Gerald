@@ -178,9 +178,9 @@ class _PushToTalkButtonState extends State<PushToTalkButton>
     final screenH = MediaQuery.of(ctx).size.height;
     final isSmall = screenH < 620;
 
-    final btnSize = isSmall ? 84.0 : 106.0;
-    final glowSize = isSmall ? 106.0 : 130.0;
-    final iconSize = isSmall ? 36.0 : 46.0;
+    final btnSize = isSmall ? 68.0 : 84.0;
+    final glowSize = isSmall ? 86.0 : 106.0;
+    final iconSize = isSmall ? 28.0 : 36.0;
 
     final Color color;
     final IconData icon;

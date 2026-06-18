@@ -27,10 +27,12 @@ class NotificationService {
       description: 'Alerts when Gerald completes a coding task',
       importance: Importance.high,
     );
-    await _plugin
+    final androidImpl = _plugin
         .resolvePlatformSpecificImplementation<
-            AndroidFlutterLocalNotificationsPlugin>()
-        ?.createNotificationChannel(channel);
+            AndroidFlutterLocalNotificationsPlugin>();
+    await androidImpl?.createNotificationChannel(channel);
+    // Android 13+ requires a runtime grant for POST_NOTIFICATIONS.
+    await androidImpl?.requestNotificationsPermission();
 
     _initialized = true;
   }
