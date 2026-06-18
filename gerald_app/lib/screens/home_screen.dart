@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 import '../providers/app_state.dart';
+import '../services/build_verification_service.dart';
 import '../theme.dart';
 import '../widgets/push_to_talk_button.dart';
 import '../widgets/message_bubble.dart';
@@ -308,6 +309,10 @@ class _VoiceSection extends StatelessWidget {
               ),
             ],
           ),
+          SizedBox(height: isSmall ? 6.0 : 8.0),
+
+          // APK build / download button
+          const _ApkButton(),
         ],
       ),
     );
@@ -325,104 +330,117 @@ class _ModeSelector extends StatelessWidget {
   Widget build(BuildContext context) {
     final convMode = state.conversationMode;
     final height = compact ? 36.0 : 42.0;
+    final radius = compact ? 8.0 : 10.0;
+    final fontSize = compact ? 9.0 : 10.0;
 
-    return Container(
-      height: height,
-      decoration: BoxDecoration(
-        color: kSurface2,
-        borderRadius: BorderRadius.circular(compact ? 9 : 12),
-        border: Border.all(color: kBorderColor),
-      ),
-      child: Stack(
-        children: [
-          // Sliding indicator
-          AnimatedAlign(
-            duration: const Duration(milliseconds: 220),
-            curve: Curves.easeInOut,
-            alignment:
-                convMode ? Alignment.centerRight : Alignment.centerLeft,
-            child: FractionallySizedBox(
-              widthFactor: 0.5,
-              child: Container(
-                margin: const EdgeInsets.all(3),
-                decoration: BoxDecoration(
-                  color: kAccentBlue.withOpacity(0.14),
-                  borderRadius: BorderRadius.circular(compact ? 6 : 9),
-                  border: Border.all(
-                    color: kAccentBlue.withOpacity(0.45),
-                    width: 1,
-                  ),
-                  boxShadow: [
-                    BoxShadow(
-                      color: kAccentBlue.withOpacity(0.15),
-                      blurRadius: 8,
+    return Row(
+      children: [
+        Expanded(
+          child: GestureDetector(
+            onTap: () => state.setConversationMode(false),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 180),
+              curve: Curves.easeInOut,
+              height: height,
+              decoration: BoxDecoration(
+                color: !convMode
+                    ? kAccentBlue.withOpacity(0.14)
+                    : kSurface2,
+                borderRadius: BorderRadius.circular(radius),
+                border: Border.all(
+                  color: !convMode
+                      ? kAccentBlue.withOpacity(0.55)
+                      : kBorderColor,
+                  width: !convMode ? 1.5 : 1,
+                ),
+                boxShadow: !convMode
+                    ? [
+                        BoxShadow(
+                          color: kAccentBlue.withOpacity(0.12),
+                          blurRadius: 8,
+                        )
+                      ]
+                    : null,
+              ),
+              child: Center(
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      Icons.touch_app_outlined,
+                      size: 12,
+                      color: !convMode ? kAccentBlue : kTextSecondary,
+                    ),
+                    const SizedBox(width: 4),
+                    Text(
+                      'MODE A',
+                      style: TextStyle(
+                        color: !convMode ? kAccentBlue : kTextSecondary,
+                        fontSize: fontSize,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 1.2,
+                      ),
                     ),
                   ],
                 ),
               ),
             ),
           ),
-          // Labels
-          Row(
-            children: [
-              Expanded(
-                child: GestureDetector(
-                  onTap: () => state.setConversationMode(false),
-                  child: Center(
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(
-                          Icons.touch_app_outlined,
-                          size: 12,
-                          color: !convMode ? kAccentBlue : kTextSecondary,
-                        ),
-                        const SizedBox(width: 4),
-                        Text(
-                          'MODE A',
-                          style: TextStyle(
-                            color: !convMode ? kAccentBlue : kTextSecondary,
-                            fontSize: compact ? 9 : 10,
-                            fontWeight: FontWeight.w700,
-                            letterSpacing: 1.2,
-                          ),
-                        ),
-                      ],
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: GestureDetector(
+            onTap: () => state.setConversationMode(true),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 180),
+              curve: Curves.easeInOut,
+              height: height,
+              decoration: BoxDecoration(
+                color: convMode
+                    ? kAccentBlue.withOpacity(0.14)
+                    : kSurface2,
+                borderRadius: BorderRadius.circular(radius),
+                border: Border.all(
+                  color: convMode
+                      ? kAccentBlue.withOpacity(0.55)
+                      : kBorderColor,
+                  width: convMode ? 1.5 : 1,
+                ),
+                boxShadow: convMode
+                    ? [
+                        BoxShadow(
+                          color: kAccentBlue.withOpacity(0.12),
+                          blurRadius: 8,
+                        )
+                      ]
+                    : null,
+              ),
+              child: Center(
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      Icons.record_voice_over_outlined,
+                      size: 12,
+                      color: convMode ? kAccentBlue : kTextSecondary,
                     ),
-                  ),
+                    const SizedBox(width: 4),
+                    Text(
+                      'MODE B',
+                      style: TextStyle(
+                        color: convMode ? kAccentBlue : kTextSecondary,
+                        fontSize: fontSize,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 1.2,
+                      ),
+                    ),
+                  ],
                 ),
               ),
-              Expanded(
-                child: GestureDetector(
-                  onTap: () => state.setConversationMode(true),
-                  child: Center(
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(
-                          Icons.record_voice_over_outlined,
-                          size: 12,
-                          color: convMode ? kAccentBlue : kTextSecondary,
-                        ),
-                        const SizedBox(width: 4),
-                        Text(
-                          'MODE B',
-                          style: TextStyle(
-                            color: convMode ? kAccentBlue : kTextSecondary,
-                            fontSize: compact ? 9 : 10,
-                            fontWeight: FontWeight.w700,
-                            letterSpacing: 1.2,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-            ],
+            ),
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 }
@@ -573,6 +591,96 @@ class _Hint extends StatelessWidget {
         const SizedBox(height: 2),
         Text(sub, style: TextStyle(color: kTextMuted, fontSize: 11)),
       ],
+    );
+  }
+}
+
+// ── APK build button ──────────────────────────────────────────────────────────
+
+class _ApkButton extends StatelessWidget {
+  const _ApkButton();
+
+  @override
+  Widget build(BuildContext context) {
+    final state = context.watch<AppState>();
+    final result = state.buildResult;
+    final busy = state.buildTriggering || result.status == BuildStatus.running;
+
+    final String label;
+    final IconData icon;
+    final Color color;
+    final VoidCallback? onTap;
+
+    if (busy) {
+      label = 'Building...';
+      icon = Icons.hourglass_top_rounded;
+      color = kAccentBlue;
+      onTap = null;
+    } else if (result.status == BuildStatus.success) {
+      label = 'Download APK';
+      icon = Icons.download_rounded;
+      color = kAccentGreen;
+      onTap = () => _onDownload(context, state);
+    } else if (result.status == BuildStatus.failed ||
+        result.status == BuildStatus.timeout) {
+      label = 'Retry';
+      icon = Icons.refresh_rounded;
+      color = kStatusError;
+      onTap = () => state.triggerBuildVerification();
+    } else {
+      label = 'Build APK';
+      icon = Icons.android_rounded;
+      color = kAccentBlue;
+      onTap = () => state.triggerBuildVerification();
+    }
+
+    return GestureDetector(
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        curve: Curves.easeInOut,
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        decoration: BoxDecoration(
+          color: onTap != null ? color.withOpacity(0.10) : kSurface2,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+            color: onTap != null ? color.withOpacity(0.35) : kBorderColor,
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (busy)
+              SizedBox(
+                width: 13,
+                height: 13,
+                child: CircularProgressIndicator(
+                  strokeWidth: 1.8,
+                  color: kAccentBlue,
+                ),
+              )
+            else
+              Icon(icon, size: 13, color: onTap != null ? color : kTextMuted),
+            const SizedBox(width: 6),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 1.0,
+                color: onTap != null ? color : kTextMuted,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _onDownload(BuildContext context, AppState state) {
+    final url = '${state.baseUrl}/apk-latest/download';
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('APK ready — open in browser: $url')),
     );
   }
 }

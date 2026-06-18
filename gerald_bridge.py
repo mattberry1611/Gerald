@@ -3,6 +3,7 @@ import re
 import json
 import subprocess
 import signal
+import time
 import shlex
 import urllib.request
 import urllib.error
@@ -521,6 +522,25 @@ def truthful_status_response(project_name: str = "CommuteCoder"):
     return data
 
 
+
+def is_planning_only_request(text: str) -> bool:
+    lower = (text or "").lower()
+    planning_phrases = [
+        "don't make any changes",
+        "do not make any changes",
+        "dont make any changes",
+        "don't make changes yet",
+        "do not make changes yet",
+        "dont make changes yet",
+        "let me know what your plan is",
+        "what is your plan",
+        "summarise what i want",
+        "summarize what i want",
+        "plan only",
+        "report back only",
+    ]
+    return any(p in lower for p in planning_phrases)
+
 def should_use_investigation_worker(text: str) -> bool:
     t = (text or "").lower()
 
@@ -624,6 +644,7 @@ Rules:
 """
 
     prompt_file = "/tmp/gerald_readonly_investigation_prompt.txt"
+    investigation_started_at = time.time()
 
     write_task_state(task_text, project_name, "investigating", "Claude Code is investigating read-only")
     write_status("investigating", "Claude Code is investigating read-only")
@@ -706,7 +727,30 @@ Rules:
             subprocess.run(["pkill", "-f", "claude --permission-mode bypassPermissions"], timeout=10)
         except Exception:
             pass
-        err = "Read-only investigation timed out after 120 seconds"
+        elapsed = round(time.time() - investigation_started_at, 2)
+        prompt_preview = ""
+        try:
+            prompt_preview = Path(prompt_file).read_text(encoding="utf-8")[:1200]
+        except Exception:
+            prompt_preview = "<could not read prompt file>"
+
+        err = (
+            f"Read-only investigation timed out after 120 seconds "
+            f"(actual_elapsed={elapsed}s, prompt_chars={len(prompt_preview)})"
+        )
+
+        try:
+            with open("/opt/Gerald/gerald_timeout_debug.log", "a", encoding="utf-8") as dbg:
+                dbg.write("\n--- TIMEOUT DEBUG ---\n")
+                dbg.write(f"timestamp={datetime.now(timezone.utc).isoformat()}\n")
+                dbg.write(f"task={task_text}\n")
+                dbg.write(f"project={project_name}\n")
+                dbg.write(f"actual_elapsed={elapsed}\n")
+                dbg.write(f"prompt_file={prompt_file}\n")
+                dbg.write("prompt_preview:\n")
+                dbg.write(prompt_preview + "\n")
+        except Exception:
+            pass
         data = {
             "task": task_text,
             "project": project_name,
@@ -791,6 +835,23 @@ def run_gerald_brain(task_text: str, project_name: str = "CommuteCoder"):
         }
 
         write_outbox(data, outbox_file)
+
+        reply_lower = (reply or "").lower()
+        if is_planning_only_request(task_text) or any(x in reply_lower for x in [
+            "happy to proceed",
+            "you’re happy to proceed",
+            "you're happy to proceed",
+            "once you confirm",
+            "let me know if you want",
+            "let me know if you’re happy",
+            "let me know if you're happy",
+            "final check",
+            "proceed with this",
+            "you confirm",
+            "happy with this",
+        ]):
+            save_pending_approval(task_text, project_name, reply)
+
         write_task_state(task_text, project_name, "completed", "Gerald Brain finished", output=reply)
         write_status("idle", "Gerald Brain finished")
         print("✅ GERALD BRAIN FINISHED")
@@ -842,12 +903,63 @@ def clean_task_for_claude(task: str) -> str:
     cleaned = cleaned.replace("You are Claude Code working for Gerald.", "")
     return cleaned.strip()
 
+
+PENDING_APPROVAL_FILE = "/opt/Gerald/pending_approval_task.json"
+
+def save_pending_approval(task_text: str, project_name: str, output: str):
+    # Save the most recent Gerald Brain plan that is waiting for Matt's approval.
+    # Approval replies must execute this, not an old outbox task.
+    data = {
+        "task": task_text,
+        "project": project_name,
+        "output": output,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+    with open(PENDING_APPROVAL_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2)
+    print(f"✅  Pending approval saved: {PENDING_APPROVAL_FILE}")
+
+def load_pending_approval(project_name: str = "CommuteCoder") -> str:
+    try:
+        if not os.path.exists(PENDING_APPROVAL_FILE):
+            return ""
+        with open(PENDING_APPROVAL_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        output = (data.get("output") or "").strip()
+        task = (data.get("task") or "").strip()
+        return output or task
+    except Exception:
+        return ""
+
+def clear_pending_approval():
+    try:
+        if os.path.exists(PENDING_APPROVAL_FILE):
+            os.remove(PENDING_APPROVAL_FILE)
+    except Exception:
+        pass
+
 def is_simple_approval(text: str) -> bool:
-    return (text or "").strip().lower() in {
+    lower = (text or "").strip().lower()
+    exact = {
         "yes", "y", "yeah", "yep", "ok", "okay", "go ahead",
         "approve", "approved", "do it", "send it", "continue",
         "proceed", "run it"
     }
+    if lower in exact:
+        return True
+
+    approval_phrases = [
+        "happy to proceed",
+        "i am happy to proceed",
+        "i'm happy to proceed",
+        "yes i am happy",
+        "yes i'm happy",
+        "go ahead",
+        "proceed",
+        "start phase one",
+        "begin implementation",
+    ]
+    return any(p in lower for p in approval_phrases)
 
 def load_last_outbox_task(project_name: str = "CommuteCoder") -> str:
     path = get_project_outbox_file(project_name)
@@ -932,17 +1044,29 @@ def start(payload: dict, background_tasks: BackgroundTasks):
         }
 
     if is_simple_approval(text):
+        pending_task = load_pending_approval(resolved_name)
+        if pending_task:
+            clear_pending_approval()
+            background_tasks.add_task(run_claude_code_worker, clean_task_for_claude(pending_task), resolved_name)
+            write_status("executing", f"Approval received — Claude Code is working on pending plan: {resolved_name}")
+            return {"ok": True, "message": "Approval received. Pending Gerald plan sent to Claude Code."}
+
         previous_task = load_last_outbox_task(resolved_name)
         if previous_task:
             background_tasks.add_task(run_claude_code_worker, clean_task_for_claude(previous_task), resolved_name)
             write_status("executing", f"Approval received — Claude Code is working on: {resolved_name}")
             return {"ok": True, "message": "Approval received. Previous Gerald task sent to Claude Code."}
-        return {"ok": False, "message": "No previous task found to approve."}
+        return {"ok": False, "message": "No pending or previous task found to approve."}
 
     if should_use_investigation_worker(text):
         background_tasks.add_task(run_claude_investigation_worker, text, resolved_name)
         write_status("investigating", f"Claude Code is investigating: {resolved_name}")
         return {"ok": True, "message": "Read-only investigation started."}
+
+    if is_planning_only_request(text):
+        background_tasks.add_task(run_gerald_brain, text, resolved_name)
+        write_status("working", f"Gerald is planning: {resolved_name}")
+        return {"ok": True, "message": "Planning request sent to Gerald Brain."}
 
     if should_use_claude_worker(text):
         background_tasks.add_task(run_claude_code_worker, text, resolved_name)
