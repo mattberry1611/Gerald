@@ -1,5 +1,7 @@
 import 'dart:convert';
+import 'dart:typed_data';
 import 'package:http/http.dart' as http;
+import 'package:http_parser/http_parser.dart';
 import '../models/project_brain.dart';
 
 class GeraldApi {
@@ -218,4 +220,39 @@ class GeraldApi {
   }
 
   String getApkDownloadUrl() => '$baseUrl/apk-latest/download';
+
+  // ── Vision ──────────────────────────────────────────────────────────────────
+
+  Future<Map<String, dynamic>> uploadVisionImage(
+    Uint8List bytes,
+    String mimeType, {
+    String prompt = '',
+  }) async {
+    final parts = mimeType.split('/');
+    final contentType = MediaType(
+      parts.isNotEmpty ? parts[0] : 'image',
+      parts.length > 1 ? parts[1] : 'jpeg',
+    );
+    final request = http.MultipartRequest(
+      'POST',
+      Uri.parse('$baseUrl/gerald-vision'),
+    )
+      ..files.add(http.MultipartFile.fromBytes(
+        'image',
+        bytes,
+        filename: 'image.${parts.length > 1 ? parts[1] : "jpg"}',
+        contentType: contentType,
+      ))
+      ..fields['prompt'] = prompt;
+
+    final streamed = await request.send().timeout(const Duration(seconds: 60));
+    final response = await http.Response.fromStream(streamed);
+
+    if (response.statusCode >= 200 && response.statusCode < 300) {
+      final decoded = jsonDecode(response.body);
+      if (decoded is Map<String, dynamic>) return decoded;
+      return {'message': decoded.toString()};
+    }
+    throw Exception('Vision error: ${response.statusCode}');
+  }
 }

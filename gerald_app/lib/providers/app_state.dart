@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/project_brain.dart';
@@ -425,6 +426,30 @@ class AppState extends ChangeNotifier {
     await _executePrompt(trimmed);
   }
 
+  /// Scans recent messages for a vision image + Gerald reply exchange and, if
+  /// found, prepends that analysis as context so the backend knows what was
+  /// in the image even though it never received the raw bytes.
+  String _buildContextualPrompt(String prompt) {
+    final msgs = messages; // already includes the just-added user message
+    if (msgs.length < 3) return prompt; // need at least: image, gerald, new user
+
+    // Exclude the message we just added (last entry) and look at what's before
+    final history = msgs.sublist(0, msgs.length - 1);
+    final recent = history.length > 6 ? history.sublist(history.length - 6) : history;
+
+    for (int i = recent.length - 1; i >= 0; i--) {
+      final msg = recent[i];
+      if (msg.role == 'user' && msg.imagePath != null) {
+        // Found a recent image message — grab the Gerald response that followed it
+        if (i + 1 < recent.length && recent[i + 1].role == 'gerald') {
+          final visionContext = recent[i + 1].content;
+          return 'Context from my previous image analysis:\n$visionContext\n\n$prompt';
+        }
+      }
+    }
+    return prompt;
+  }
+
   Future<void> _executePrompt(String prompt) async {
     _addMessage('user', prompt);
     _isLoading = true;
@@ -441,8 +466,10 @@ class AppState extends ChangeNotifier {
     _log('Sent: ${_shortLabel(prompt)}');
     notifyListeners();
 
+    final enrichedPrompt = _buildContextualPrompt(prompt);
+
     try {
-      final result = await _api.sendPrompt(prompt, project: _selectedProject);
+      final result = await _api.sendPrompt(enrichedPrompt, project: _selectedProject);
       final ok = result['ok'] as bool? ?? true;
       if (!ok) {
         final errMsg = result['error'] as String? ?? 'Gerald rejected the request';
@@ -484,13 +511,30 @@ class AppState extends ChangeNotifier {
 
   // ── Image ──────────────────────────────────────────────────────────────────
 
-  void addImageMessage(String imagePath, {String caption = ''}) {
+  Future<void> addImageMessage(
+    String imagePath,
+    Uint8List bytes,
+    String mimeType, {
+    String caption = '',
+  }) async {
     _addMessage(
       'user',
       caption.isNotEmpty ? caption : '[Image]',
       imagePath: imagePath,
     );
     _log('Image attached: ${imagePath.split(RegExp(r'[/\\]')).last}');
+
+    try {
+      final result = await _api.uploadVisionImage(bytes, mimeType, prompt: caption);
+      final reply = (result['message'] ?? result['reply'] ?? result['output'] ?? '').toString().trim();
+      if (reply.isNotEmpty) {
+        _addMessage('gerald', reply);
+        if (_ttsEnabled) TtsService.instance.speak(reply).ignore();
+      }
+    } catch (e) {
+      _addMessage('gerald', 'Vision error: $e');
+      _log('Vision error: $e');
+    }
   }
 
   // ── Approval ───────────────────────────────────────────────────────────────

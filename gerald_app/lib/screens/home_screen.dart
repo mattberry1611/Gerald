@@ -626,7 +626,9 @@ Future<void> _pickImage(BuildContext context, AppState state) async {
     final file = await ImagePicker()
         .pickImage(source: source, imageQuality: 85, maxWidth: 1280);
     if (file == null || !context.mounted) return;
-    state.addImageMessage(file.path);
+    final bytes = await file.readAsBytes();
+    final mimeType = file.mimeType ?? 'image/jpeg';
+    await state.addImageMessage(file.path, bytes, mimeType);
   } catch (e) {
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
