@@ -55,3 +55,4 @@ current_status_backup.txt
 # Accidental Windows path artifacts
 C:\\M/
 "C:\\M/"
+_archive_untracked_*/
