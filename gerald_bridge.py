@@ -1574,6 +1574,7 @@ def send_to_claude_code(payload: dict):
     """Run an approved task through Claude Code on the server."""
     message = payload.get("message", "APPROVED TO EDIT")
     project = payload.get("project", "CommuteCoder")
+    worker_dir = get_worker_directory(message, project)
 
     safe_prompt = f"""
 You are Claude Code running on Gerald Server.
