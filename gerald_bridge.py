@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 
 from fastapi import FastAPI, BackgroundTasks, UploadFile, File, Form, HTTPException, Request
 from task_state import read_task, truthful_status, start_task, update_stage, add_file_changed, complete_task, fail_task
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 
