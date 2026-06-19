@@ -19,6 +19,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 import build_verifier
 import multi_ai_router
+from gerald_brain import inject_brain_context
 from gerald_openai_brain import ask_gerald, decide_supervisor_action
 from gerald_vision import review_image
 from gerald_request_review import review_task_result
@@ -424,6 +425,10 @@ Rules:
 - Do not build APK.
 - After editing, summarize exactly which files changed and what changed.
 """
+
+    _proj_path, _ = resolve_project(project_name)
+    safe_prompt = inject_brain_context(safe_prompt, _proj_path, project_name)
+    print(f"[brain] inject_brain_context (worker): {len(safe_prompt)} chars, project={project_name}, path={_proj_path}")
 
     write_task_state(task_text, project_name, "executing", "Claude Code is editing files")
     write_status("executing", "Claude Code editing files")
@@ -916,6 +921,10 @@ Rules:
   5. Files that would need changing
 - Do not claim you changed anything.
 """
+
+    _inv_proj_path, _ = resolve_project(project_name)
+    safe_prompt = inject_brain_context(safe_prompt, _inv_proj_path, project_name, auto_create=False)
+    print(f"[brain] inject_brain_context (investigation): {len(safe_prompt)} chars, project={project_name}, path={_inv_proj_path}")
 
     prompt_file = "/tmp/gerald_readonly_investigation_prompt.txt"
     investigation_started_at = time.time()
