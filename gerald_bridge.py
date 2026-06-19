@@ -385,6 +385,7 @@ def should_use_backend_root(task_text: str) -> bool:
         return False
     return False
 
+# Returns the active worker directory for the given task and project.
 def get_worker_directory(task_text: str, project_name: str = "CommuteCoder") -> str:
     if should_use_backend_root(task_text):
         return "/opt/Gerald"
