@@ -24,6 +24,7 @@ from gerald_openai_brain import ask_gerald, decide_supervisor_action
 from gerald_vision import review_image
 from gerald_request_review import review_task_result
 import gerald_issue_memory
+from verification_layer import VerificationLayer
 
 app = FastAPI()
 
@@ -486,6 +487,13 @@ Rules:
         stdout, stderr = proc.communicate()
         result = subprocess.CompletedProcess(proc.args, proc.returncode, stdout, stderr)
 
+        # Lightweight service-health verification — runs after subprocess, never blocks completion
+        _vl = VerificationLayer()
+        _verification = _vl.run_verification_suite([
+            {"type": "service", "command": "curl -sf http://localhost:8000/health"}
+        ])
+        print(f"[verify] health={_verification['passed']}")
+
         output = result.stdout.strip()
         error = result.stderr.strip()
 
@@ -518,6 +526,7 @@ Rules:
                     "returncode": result.returncode,
                     "output": output,
                     "error": error,
+                    "verification": _verification,
                     "timestamp": datetime.now(timezone.utc).isoformat()
                 }
                 write_outbox(data)
@@ -543,6 +552,7 @@ Rules:
                     "error": error,
                     "review_verdict": "FAIL",
                     "review_reasons": review["reasons"],
+                    "verification": _verification,
                     "timestamp": datetime.now(timezone.utc).isoformat()
                 }
                 write_outbox(data)
@@ -568,6 +578,7 @@ Rules:
                 "returncode": result.returncode,
                 "output": result.stdout.strip(),
                 "error": result.stderr.strip(),
+                "verification": _verification,
                 "timestamp": datetime.now(timezone.utc).isoformat()
             }
             write_outbox(data)
@@ -586,6 +597,7 @@ Rules:
             "status": "error",
             "output": "",
             "error": "Claude Code task timed out",
+            "verification": {"passed": False, "results": [], "blocked": False},
             "timestamp": datetime.now(timezone.utc).isoformat()
         }
         write_outbox(data)
