@@ -491,7 +491,7 @@ Rules:
         # Lightweight service-health verification — runs after subprocess, never blocks completion
         _vl = VerificationLayer()
         _verification = _vl.run_verification_suite([
-            {"type": "service", "command": "curl -sf http://localhost:8000/health"}
+            {"type": "service", "command": "curl -sf http://localhost:8000/task/truth"}
         ])
         print(f"[verify] health={_verification['passed']}")
 
