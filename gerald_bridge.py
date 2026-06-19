@@ -926,6 +926,15 @@ Rules:
     safe_prompt = inject_brain_context(safe_prompt, _inv_proj_path, project_name, auto_create=False)
     print(f"[brain] inject_brain_context (investigation): {len(safe_prompt)} chars, project={project_name}, path={_inv_proj_path}")
 
+    _inv_all_projects = load_projects()
+    _inv_other_paths = [p["path"] for p in _inv_all_projects if p["path"].lower() != _inv_proj_path.lower()]
+    _inv_isolation_lines = "\n".join(f"- {p}" for p in _inv_other_paths)
+    _inv_isolation_block = (
+        f"\n# Project Isolation\nDO NOT read or modify any files outside {_inv_proj_path}.\n"
+        f"Explicitly forbidden paths:\n{_inv_isolation_lines}\n"
+    ) if _inv_other_paths else ""
+    safe_prompt = safe_prompt + _inv_isolation_block
+
     prompt_file = "/tmp/gerald_readonly_investigation_prompt.txt"
     investigation_started_at = time.time()
 
