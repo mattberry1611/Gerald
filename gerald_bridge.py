@@ -71,6 +71,7 @@ def save_projects(projects):
         json.dump(projects, f, indent=2)
 
 
+# Resolves Gerald project paths from the registered project list
 def resolve_project(project_name: str):
     """Return (path, canonical_name) for a project name."""
     if not project_name:
