@@ -216,12 +216,11 @@ def _notify_recurring_failure(alert: dict, project_name: str) -> None:
     count = alert.get("occurrence_count", 2)
     desc = alert.get("description", "")[:120]
     issue_type = alert.get("type", "unknown")
+    kind = issue_type.replace("_", " ")
+    count_str = f"{count} time{'s' if count != 1 else ''}"
     msg = (
-        f"[Recurring Failure Alert] Gerald has seen the same {issue_type.replace('_', ' ')} "
-        f"{count} time(s) in {project_name}.\n"
-        f"Issue: {desc}\n"
-        f"First seen: {alert.get('first_seen', 'unknown')}\n"
-        f"No automatic changes made. Manual review recommended."
+        f"Heads up — Gerald has hit the same {kind} {count_str} in {project_name}. "
+        f"No automatic changes were made. Manual review is recommended."
     )
     print(f"[RLv2] RECURRING FAILURE DETECTED (x{count}): {desc[:80]}")
     project_outbox = get_project_outbox_file(project_name)
@@ -235,8 +234,8 @@ def _notify_recurring_failure(alert: dict, project_name: str) -> None:
     }
     write_outbox(alert_data, project_outbox)
     _pending_notification = {
-        "title": "Recurring Failure Detected",
-        "body": f"{project_name}: {desc[:80]} (x{count})",
+        "title": "Recurring issue detected",
+        "body": f"{project_name}: same {kind} seen {count_str}.",
         "type": "recurring_failure_alert",
         "received": datetime.now(timezone.utc).isoformat(),
         "delivered": False,
