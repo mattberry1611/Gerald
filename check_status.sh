@@ -1,0 +1,15 @@
+#!/bin/bash
+# Quick status check script
+echo "=== Checking Gerald Status ==="
+echo ""
+echo "--- gerald_status.json ---"
+cat /opt/Gerald/gerald_status.json 2>/dev/null || echo "File not found"
+echo ""
+echo "--- Recent logs (if any) ---"
+tail -n 20 /opt/Gerald/*.log 2>/dev/null || echo "No log files found"
+echo ""
+echo "--- Process status ---"
+ps aux | grep -E "(gerald|uvicorn|python)" | grep -v grep || echo "No Gerald processes running"
+echo ""
+echo "--- Port 8000 status ---"
+netstat -tlnp 2>/dev/null | grep 8000 || ss -tlnp 2>/dev/null | grep 8000 || echo "Port check unavailable"
