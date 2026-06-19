@@ -1261,8 +1261,20 @@ def run_direct_answer(task_text: str, project_name: str, message: str):
     }
     write_outbox(data)
     write_outbox(data, outbox_file)
-    write_task_state(task_text, project_name, "completed", "Gerald answered", files_changed=[], output=reply, error="")
-    write_status("idle", "Gerald answered")
+    if looks_like_clarification_request(reply):
+        write_task_state(
+            task_text,
+            project_name,
+            "needs_clarification",
+            "Gerald needs clarification",
+            files_changed=[],
+            output=reply,
+            error="",
+        )
+        write_status("needs_clarification", "Gerald needs clarification")
+    else:
+        write_task_state(task_text, project_name, "completed", "Gerald answered", files_changed=[], output=reply, error="")
+        write_status("idle", "Gerald answered")
 
 @app.post("/start")
 def start(payload: dict, background_tasks: BackgroundTasks):
