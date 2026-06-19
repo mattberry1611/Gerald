@@ -385,17 +385,56 @@ Rules:
     write_status("executing", "Claude Code editing files")
 
     try:
-        result = subprocess.run(
+        proc = subprocess.Popen(
             [
                 "sudo", "-u", "geraldbuild", "-H",
                 "bash", "-lc",
                 f"cd {worker_dir} && claude --permission-mode bypassPermissions -p {shlex.quote(safe_prompt)}"
             ],
             cwd=worker_dir,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
-            timeout=900,
+            start_new_session=True,
         )
+
+        deadline = time.monotonic() + 900
+        next_heartbeat = time.monotonic() + 30
+
+        while proc.poll() is None:
+            now = time.monotonic()
+            if now >= deadline:
+                try:
+                    os.killpg(proc.pid, signal.SIGTERM)
+                except Exception:
+                    proc.terminate()
+                try:
+                    proc.wait(timeout=10)
+                except Exception:
+                    try:
+                        os.killpg(proc.pid, signal.SIGKILL)
+                    except Exception:
+                        proc.kill()
+                raise subprocess.TimeoutExpired(proc.args, 900)
+
+            if now >= next_heartbeat:
+                elapsed = int(900 - max(0, deadline - now))
+                write_task_state(
+                    task_text,
+                    project_name,
+                    "executing",
+                    f"Claude Code still running ({elapsed}s elapsed)",
+                    files_changed=get_changed_files_under_lib(project_path),
+                    output="",
+                    error="",
+                )
+                write_status("executing", f"Claude Code still running ({elapsed}s elapsed)")
+                next_heartbeat += 30
+
+            time.sleep(5)
+
+        stdout, stderr = proc.communicate()
+        result = subprocess.CompletedProcess(proc.args, proc.returncode, stdout, stderr)
 
         output = result.stdout.strip()
         error = result.stderr.strip()
