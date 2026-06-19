@@ -352,7 +352,6 @@ def get_worker_directory(task_text: str, project_name: str = "CommuteCoder") -> 
 
 def run_claude_code_worker(task_text: str, project_name: str = "CommuteCoder"):
     """Run approved implementation tasks through real Claude Code CLI."""
-    project_path = "/opt/Gerald/gerald_app"
     project_outbox = get_project_outbox_file(project_name)
 
     worker_dir = get_worker_directory(task_text, project_name)
@@ -429,7 +428,7 @@ Rules:
                     project_name,
                     "executing",
                     f"Claude Code still running ({elapsed}s elapsed)",
-                    files_changed=get_changed_files_under_lib(project_path),
+                    files_changed=get_changed_files_under_lib(worker_dir),
                     output="",
                     error="",
                 )
@@ -444,7 +443,7 @@ Rules:
         output = result.stdout.strip()
         error = result.stderr.strip()
 
-        changed_files = get_changed_files_under_lib(project_path)
+        changed_files = get_changed_files_under_lib(worker_dir)
         write_task_state(
             task_text,
             project_name,
@@ -776,7 +775,6 @@ def narrow_investigation_prompt(task_text: str) -> str:
     )
 
 def run_claude_investigation_worker(task_text: str, project_name: str = "CommuteCoder"):
-    project_path = "/opt/Gerald/gerald_app"
     project_outbox = get_project_outbox_file(project_name)
 
     worker_dir = get_worker_directory(task_text, project_name)
