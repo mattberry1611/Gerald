@@ -333,10 +333,12 @@ def should_use_backend_root(task_text: str) -> bool:
         "microphone",
         "mode selector",
     ]
-    if any(t in lower for t in backend_terms):
-        return True
+    # Flutter/UI tasks must win before backend keywords, because prompts often say
+    # "do not modify backend files" while still being app/UI tasks.
     if any(t in lower for t in flutter_terms):
         return False
+    if any(t in lower for t in backend_terms):
+        return True
     return False
 
 def get_worker_directory(task_text: str, project_name: str = "CommuteCoder") -> str:
