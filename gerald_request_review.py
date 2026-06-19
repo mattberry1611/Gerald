@@ -220,6 +220,34 @@ _BACKEND_WORKER = "/opt/Gerald"
 # Minimum output length to consider Claude's response non-trivial
 _MIN_OUTPUT_CHARS = 30
 
+# Flutter app path prefix relative to the git root
+_FLUTTER_APP_PREFIX = "gerald_app/"
+
+# Phrases in task_text that explicitly permit Flutter/frontend file changes on a backend task
+_FLUTTER_ALLOW_PHRASES = [
+    "allow flutter",
+    "allow frontend",
+    "allow gerald_app",
+    "flutter changes allowed",
+    "frontend changes allowed",
+]
+
+
+def _is_backend_only_task(task_text: str, worker_dir: str) -> bool:
+    """Return True when the task is scoped to the backend root (no Flutter edits expected)."""
+    if "backend-only" in (task_text or "").lower():
+        return True
+    return os.path.abspath(worker_dir) == os.path.abspath(_BACKEND_WORKER)
+
+
+def _flutter_changes_explicitly_allowed(task_text: str) -> bool:
+    lower = (task_text or "").lower()
+    return any(phrase in lower for phrase in _FLUTTER_ALLOW_PHRASES)
+
+
+def _flutter_paths_in_files(files: list) -> list:
+    return [f for f in (files or []) if f.startswith(_FLUTTER_APP_PREFIX)]
+
 
 def _git_diff_stat(git_root: str) -> str:
     """Return git diff --stat output (unstaged changes vs HEAD)."""
@@ -335,6 +363,14 @@ def review_task_result(
                     f"File changed outside expected scope ({scope_prefix.rstrip('/')}): {f}"
                 )
 
+    # 4b. Backend-only task must not touch Flutter (gerald_app/) files
+    if _is_backend_only_task(task_text, worker_dir) and not _flutter_changes_explicitly_allowed(task_text):
+        flutter_hits = list(set(_flutter_paths_in_files(files_changed) + _flutter_paths_in_files(git_changed)))
+        if flutter_hits:
+            reasons.append(
+                f"Backend-only task modified Flutter (gerald_app/) paths: {flutter_hits}"
+            )
+
     # 5. Silent failure — no meaningful output
     if not (claude_output or "").strip() or len((claude_output or "").strip()) < _MIN_OUTPUT_CHARS:
         reasons.append(
@@ -354,3 +390,31 @@ def review_task_result(
         "git_stat": git_stat,
         "git_changed_files": git_changed,
     }
+
+
+# ─── Inline tests ─────────────────────────────────────────────────────────────
+
+def _test_backend_only_flutter_fail():
+    """Backend-only task with a gerald_app/ file in files_changed must return FAIL."""
+    result = review_task_result(
+        task_text="Fix the backend API endpoint (backend-only)",
+        project_name="CommuteCoder",
+        worker_dir="/opt/Gerald",
+        claude_output="Fixed the endpoint successfully with all the required changes.",
+        files_changed=["gerald_app/lib/screens/home_screen.dart"],
+        returncode=0,
+        error="",
+    )
+    assert result["verdict"] == "FAIL", (
+        f"Expected FAIL for backend-only task touching gerald_app/, got {result['verdict']}: {result['reasons']}"
+    )
+    flutter_reason = any("gerald_app/" in r for r in result["reasons"])
+    assert flutter_reason, (
+        f"Expected a reason mentioning gerald_app/, got: {result['reasons']}"
+    )
+    print("[test] _test_backend_only_flutter_fail PASSED")
+
+
+if __name__ == "__main__":
+    _test_backend_only_flutter_fail()
+    print("All inline tests passed.")
