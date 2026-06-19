@@ -31,3 +31,27 @@ server_stdout.txt
 Thumbs.db
 .vscode/
 .idea/
+
+# Gerald runtime/build artifacts
+active_task.json
+pending_approval_task.json
+gerald_outbox_*.json
+apk_manifest.json
+apk_serve/
+conversations/
+*.log
+
+# Local Flutter/Android machine files
+gerald_app/android/local.properties
+
+# Gerald backup/snapshot files
+*.backup-*
+*.bak_*
+*.broken-*
+edit_backups/
+edit_snapshots/
+current_status_backup.txt
+
+# Accidental Windows path artifacts
+C:\\M/
+"C:\\M/"
