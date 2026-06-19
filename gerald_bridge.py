@@ -303,6 +303,7 @@ Only update files that are directly relevant to what you just did. Keep updates 
 
 
 
+# Decides whether a task should run from the backend root based on its content.
 def should_use_backend_root(task_text: str) -> bool:
     lower = (task_text or "").lower()
     backend_terms = [
