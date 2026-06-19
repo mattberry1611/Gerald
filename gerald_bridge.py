@@ -21,6 +21,7 @@ import build_verifier
 import multi_ai_router
 from gerald_openai_brain import ask_gerald, decide_supervisor_action
 from gerald_vision import review_image
+from gerald_request_review import review_task_result
 
 app = FastAPI()
 
@@ -444,30 +445,89 @@ Rules:
         error = result.stderr.strip()
 
         changed_files = get_changed_files_under_lib(worker_dir)
-        write_task_state(
-            task_text,
-            project_name,
-            "completed" if result.returncode == 0 else "failed",
-            "Claude Code task finished" if result.returncode == 0 else "Claude Code task failed",
-            files_changed=changed_files,
-            output=output,
-            error=error,
-        )
 
-        data = {
-            "task": task_text,
-            "project": project_name,
-            "status": "done" if result.returncode == 0 else "error",
-            "returncode": result.returncode,
-            "output": result.stdout.strip(),
-            "error": result.stderr.strip(),
-            "timestamp": datetime.now(timezone.utc).isoformat()
-        }
-
-        write_outbox(data)
-        write_outbox(data, project_outbox)
-        write_status("idle" if result.returncode == 0 else "error",
-                     "Claude Code task finished" if result.returncode == 0 else "Claude Code task failed")
+        if result.returncode == 0:
+            review = review_task_result(
+                task_text=task_text,
+                project_name=project_name,
+                worker_dir=worker_dir,
+                claude_output=output,
+                files_changed=changed_files,
+                returncode=result.returncode,
+                error=error,
+            )
+            if review["verdict"] == "PASS":
+                write_task_state(
+                    task_text,
+                    project_name,
+                    "completed",
+                    "Claude Code task finished",
+                    files_changed=changed_files,
+                    output=output,
+                    error=error,
+                )
+                data = {
+                    "task": task_text,
+                    "project": project_name,
+                    "status": "done",
+                    "returncode": result.returncode,
+                    "output": output,
+                    "error": error,
+                    "timestamp": datetime.now(timezone.utc).isoformat()
+                }
+                write_outbox(data)
+                write_outbox(data, project_outbox)
+                write_status("idle", "Claude Code task finished")
+            else:
+                reasons_text = "; ".join(review["reasons"])
+                write_task_state(
+                    task_text,
+                    project_name,
+                    "review_failed",
+                    f"Review Agent V1 rejected: {reasons_text}",
+                    files_changed=changed_files,
+                    output=output,
+                    error=error,
+                )
+                data = {
+                    "task": task_text,
+                    "project": project_name,
+                    "status": "review_failed",
+                    "returncode": result.returncode,
+                    "output": output,
+                    "error": error,
+                    "review_verdict": "FAIL",
+                    "review_reasons": review["reasons"],
+                    "timestamp": datetime.now(timezone.utc).isoformat()
+                }
+                write_outbox(data)
+                write_outbox(data, project_outbox)
+                write_status(
+                    "error",
+                    f"Review Agent V1 rejected: {review['reasons'][0] if review['reasons'] else 'unknown'}"
+                )
+        else:
+            write_task_state(
+                task_text,
+                project_name,
+                "failed",
+                "Claude Code task failed",
+                files_changed=changed_files,
+                output=output,
+                error=error,
+            )
+            data = {
+                "task": task_text,
+                "project": project_name,
+                "status": "error",
+                "returncode": result.returncode,
+                "output": result.stdout.strip(),
+                "error": result.stderr.strip(),
+                "timestamp": datetime.now(timezone.utc).isoformat()
+            }
+            write_outbox(data)
+            write_outbox(data, project_outbox)
+            write_status("error", "Claude Code task failed")
 
     except subprocess.TimeoutExpired:
         data = {
