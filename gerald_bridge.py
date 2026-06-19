@@ -19,7 +19,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 import build_verifier
 import multi_ai_router
-from gerald_openai_brain import ask_gerald
+from gerald_openai_brain import ask_gerald, decide_supervisor_action
 from gerald_vision import review_image
 
 app = FastAPI()
@@ -1264,16 +1264,16 @@ Return JSON with this schema:
 """
 
     try:
-        client = OpenAI(api_key=api_key)
-        response = client.responses.create(
-            model=os.environ.get("GERALD_DECISION_MODEL", "gpt-4.1"),
-            instructions="You are a strict backend decision router. Return only valid JSON.",
-            input=prompt,
+        data = decide_supervisor_action(
+            user_text=user_text,
+            project=project_name,
+            payload=payload,
+            current_task=current_task,
+            pending=pending,
+            last_outbox=last_outbox,
         )
-        raw = (response.output_text or "").strip()
-        data = json.loads(raw)
         if not isinstance(data, dict):
-            raise ValueError("decision response was not a JSON object")
+            raise ValueError("supervisor response was not a JSON object")
         data.setdefault("action", "fallback_router")
         data.setdefault("reason", "")
         data.setdefault("task", user_text)

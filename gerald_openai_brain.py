@@ -268,3 +268,117 @@ Respond as Gerald.
     _append_memory_if_needed(project, prompt, reply)
 
     return reply
+
+
+def decide_supervisor_action(user_text: str, project: str, payload: dict, current_task: dict, pending: str, last_outbox: dict) -> dict:
+    """
+    Gerald Brain V2 supervisor decision.
+    OpenAI is the supervisor Matt interacts with.
+    Claude is only a coding worker/tool.
+    """
+    client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+
+    global_memory = _read_file(GLOBAL_MEMORY)
+    project_memory = _read_file(_project_memory_file(_safe_project(project)))
+    live_project_brain = _load_project_brain_files(_safe_project(project))
+    recent_turns = _load_recent_conversation(_safe_project(project), limit=12)
+
+    recent_text = ""
+    for turn in recent_turns:
+        recent_text += f"\nMatt: {turn.get('user','')}\nGerald: {turn.get('assistant','')}\n"
+
+    supervisor_brain = _read_file(BASE / "supervisor_brain.md")
+    gerald_lessons = _read_file(BASE / "gerald_lessons.md")
+
+    prompt = f"""
+You are Gerald Brain V2.
+
+You are the supervisor Matt interacts with.
+Claude Code is only a coding worker/tool.
+
+Your job:
+Decide the next action for Matt's current message using memory, project context, recent conversation, current task state, pending approvals, and lessons.
+
+Available actions:
+- answer_directly: answer Matt now, no coding worker.
+- ask_clarification: ask Matt a short question because the request is genuinely blocked.
+- gerald_brain: provide planning/reasoning, no code changes.
+- execute_pending_approval: Matt approved an existing pending plan.
+- claude_code: send a clear implementation task to Claude Code.
+- readonly_investigation: ask Claude Code to inspect/report only.
+- status_check: report current task status.
+- fallback_router: only if the supervisor cannot decide safely.
+
+Rules:
+- OpenAI/Gerald is the supervisor and conversation brain.
+- Claude should only receive small, specific worker tasks.
+- Prefer concise, practical responses.
+- If Matt clearly approves a small implementation task, choose claude_code.
+- If Matt asks a conceptual/system question, answer_directly or gerald_brain.
+- If Claude/provider is unavailable, do not pretend work can proceed.
+- Do not choose claude_code for vague plans unless Matt clearly approved implementation.
+- Use durable root-cause fixes, not one-off phrase patches.
+- Return ONLY valid JSON.
+
+SUPERVISOR BRAIN:
+{supervisor_brain}
+
+GERALD LESSONS:
+{gerald_lessons}
+
+GLOBAL MEMORY:
+{global_memory}
+
+PROJECT MEMORY:
+{project_memory}
+
+LIVE PROJECT BRAIN:
+{live_project_brain}
+
+RECENT CONVERSATION:
+{recent_text}
+
+PROJECT:
+{project}
+
+CURRENT USER MESSAGE:
+{user_text}
+
+PAYLOAD KEYS:
+{list(payload.keys())}
+
+CURRENT TASK:
+{json.dumps(current_task, indent=2)[:3000]}
+
+PENDING APPROVAL:
+{pending[:3000]}
+
+LAST OUTBOX:
+{json.dumps(last_outbox, indent=2)[:3000]}
+
+Return JSON:
+{{
+  "action": "answer_directly|ask_clarification|gerald_brain|execute_pending_approval|claude_code|readonly_investigation|status_check|fallback_router",
+  "reason": "short reason",
+  "task": "exact worker task if applicable",
+  "message": "brief direct response to Matt if applicable"
+}}
+"""
+
+    response = client.responses.create(
+        model=os.environ.get("GERALD_SUPERVISOR_MODEL", "gpt-4.1"),
+        instructions="Return only valid JSON. You are Gerald Brain V2, the supervisor.",
+        input=prompt,
+    )
+
+    raw = (response.output_text or "").strip()
+    data = json.loads(raw)
+    if not isinstance(data, dict):
+        raise ValueError("Supervisor response was not a JSON object")
+
+    data.setdefault("action", "fallback_router")
+    data.setdefault("reason", "")
+    data.setdefault("task", user_text)
+    data.setdefault("message", "")
+    return data
+
