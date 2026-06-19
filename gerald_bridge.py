@@ -992,8 +992,19 @@ def run_gerald_brain(task_text: str, project_name: str = "CommuteCoder"):
         ]):
             save_pending_approval(task_text, project_name, reply)
 
-        write_task_state(task_text, project_name, "completed", "Gerald Brain finished", output=reply)
-        write_status("idle", "Gerald Brain finished")
+        if looks_like_clarification_request(reply):
+            write_task_state(
+                task_text,
+                project_name,
+                "needs_clarification",
+                "Gerald needs clarification",
+                output=reply,
+                error="",
+            )
+            write_status("needs_clarification", "Gerald needs clarification")
+        else:
+            write_task_state(task_text, project_name, "completed", "Gerald Brain finished", output=reply)
+            write_status("idle", "Gerald Brain finished")
         print("✅ GERALD BRAIN FINISHED")
         print(reply)
 
@@ -2021,13 +2032,16 @@ Rules:
     write_status("executing", "Auto-fix running through Claude")
 
     try:
+        prompt_file = "/tmp/gerald_auto_fix_prompt.txt"
+        Path(prompt_file).write_text(claude_prompt, encoding="utf-8")
+
         result = subprocess.run(
             [
                 "sudo", "-u", "geraldbuild", "-H",
                 "bash", "-lc",
-                "cat /tmp/gerald_vision_prompt.txt | cd /opt/Gerald/gerald_app && claude --permission-mode bypassPermissions -p"
+                f'cd /opt/Gerald/gerald_app && claude --permission-mode bypassPermissions -p "$(cat {prompt_file})"'
             ],
-            cwd="/opt/Gerald",
+            cwd="/opt/Gerald/gerald_app",
             capture_output=True,
             text=True,
             timeout=900,
