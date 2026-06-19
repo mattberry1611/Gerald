@@ -22,6 +22,7 @@ import multi_ai_router
 from gerald_openai_brain import ask_gerald, decide_supervisor_action
 from gerald_vision import review_image
 from gerald_request_review import review_task_result
+import gerald_issue_memory
 
 app = FastAPI()
 
@@ -202,6 +203,44 @@ def write_outbox(data, outbox_file=None):
     if outbox_file and outbox_file != OUTBOX_FILE:
         with open(OUTBOX_FILE, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
+
+
+# ─── Reasoning Layer V2: recurring-failure notifications ─────────────────────
+
+def _notify_recurring_failure(alert: dict, project_name: str) -> None:
+    """Write a recurring-failure alert to Matt's outbox and pending notification.
+
+    This only logs and alerts — it does NOT modify any code.
+    """
+    global _pending_notification
+    count = alert.get("occurrence_count", 2)
+    desc = alert.get("description", "")[:120]
+    issue_type = alert.get("type", "unknown")
+    msg = (
+        f"[Recurring Failure Alert] Gerald has seen the same {issue_type.replace('_', ' ')} "
+        f"{count} time(s) in {project_name}.\n"
+        f"Issue: {desc}\n"
+        f"First seen: {alert.get('first_seen', 'unknown')}\n"
+        f"No automatic changes made. Manual review recommended."
+    )
+    print(f"[RLv2] RECURRING FAILURE DETECTED (x{count}): {desc[:80]}")
+    project_outbox = get_project_outbox_file(project_name)
+    alert_data = {
+        "task": "Reasoning Layer V2 alert",
+        "project": project_name,
+        "status": "recurring_failure_alert",
+        "output": msg,
+        "alert": alert,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+    write_outbox(alert_data, project_outbox)
+    _pending_notification = {
+        "title": "Recurring Failure Detected",
+        "body": f"{project_name}: {desc[:80]} (x{count})",
+        "type": "recurring_failure_alert",
+        "received": datetime.now(timezone.utc).isoformat(),
+        "delivered": False,
+    }
 
 
 def run_claude(task_text: str, project_path: str = BASE, project_name: str = "CommuteCoder"):
@@ -529,6 +568,11 @@ Rules:
             write_outbox(data)
             write_outbox(data, project_outbox)
             write_status("error", "Claude Code task failed")
+            # ── Reasoning Layer V2: track repeated task failures ───────────────
+            _failure_text = result.stderr.strip() or result.stdout.strip()
+            _rl2_alert = gerald_issue_memory.record_task_failure(_failure_text, task_text, project_name)
+            if _rl2_alert:
+                _notify_recurring_failure(_rl2_alert, project_name)
 
     except subprocess.TimeoutExpired:
         data = {
@@ -1429,6 +1473,11 @@ def start(payload: dict, background_tasks: BackgroundTasks):
     raw_project = payload.get("project", "")
     project_name_input = raw_project.strip() if isinstance(raw_project, str) else ""
     project_path, resolved_name = resolve_project(project_name_input)
+
+    # ── Reasoning Layer V2: detect manual corrections from Matt ───────────────
+    _rl2_alert = gerald_issue_memory.check_correction(text, resolved_name)
+    if _rl2_alert:
+        _notify_recurring_failure(_rl2_alert, resolved_name)
 
     # Gerald Decision Agent V1: OpenAI decides the next backend action.
     decision = decide_next_action(text, resolved_name, payload)
