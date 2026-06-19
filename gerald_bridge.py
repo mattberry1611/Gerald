@@ -1395,7 +1395,7 @@ def start(payload: dict, background_tasks: BackgroundTasks):
         pending_task = load_pending_approval(resolved_name)
         if pending_task:
             clear_pending_approval()
-            claude_task = decision_task if decision_task else clean_task_for_claude(pending_task)
+            claude_task = clean_task_for_claude(pending_task)
             background_tasks.add_task(run_claude_code_worker, claude_task, resolved_name)
             write_status("executing", f"Decision Agent approved pending plan: {resolved_name}")
             return {"ok": True, "message": "Decision Agent: pending plan sent to Claude Code.", "decision": decision}
