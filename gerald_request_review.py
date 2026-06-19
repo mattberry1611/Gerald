@@ -1,0 +1,356 @@
+import os
+import subprocess
+import threading
+from dataclasses import dataclass
+from typing import List, Optional
+
+# Provider/session/rate-limit error signals — mirrors gerald_openai_brain._CLAUDE_PROVIDER_ERROR_SIGNALS
+_PROVIDER_ERROR_SIGNALS = [
+    "authentication",
+    "invalid api key",
+    "invalid_api_key",
+    "authentication_error",
+    "permission_error",
+    "rate limit",
+    "rate_limit",
+    "rate_limit_exceeded",
+    "overloaded",
+    "overloaded_error",
+    "usage limit",
+    "credit balance",
+    "quota exceeded",
+    "unauthorized",
+    " 401 ",
+    "error 401",
+    " 403 ",
+    "error 403",
+    " 429 ",
+    "error 429",
+    " 529 ",
+    "error 529",
+    "service unavailable",
+    "session expired",
+    "session invalid",
+    "billing",
+    "api_error",
+]
+
+# Exact phrases that must appear in the original user request to qualify for a post-task APK build.
+# Checked case-insensitively. No fuzzy matching — partial words do not qualify.
+APK_BUILD_PHRASES = [
+    "build apk",
+    "build the apk",
+    "create apk",
+    "generate apk",
+    "run apk build",
+]
+
+
+@dataclass
+class RequestReview:
+    intent: str
+    risk: str
+    should_ask_approval: bool
+    should_delegate_to_claude: bool
+    should_build_apk: bool
+    reasons: List[str]
+
+
+def _has_explicit_apk_phrase(text: str) -> bool:
+    """Return True only if text contains one of the exact APK build phrases (case-insensitive)."""
+    lower = (text or "").lower()
+    return any(phrase in lower for phrase in APK_BUILD_PHRASES)
+
+
+def _has_provider_error(output: str, error: str) -> bool:
+    """Return True if any provider/session/rate-limit error signal appears in output or error."""
+    combined = f"{output or ''} {error or ''}".lower()
+    return any(sig in combined for sig in _PROVIDER_ERROR_SIGNALS)
+
+
+def review_request(prompt: str) -> RequestReview:
+    p = (prompt or "").lower()
+    reasons = []
+
+    build_words = [
+        "build", "implement", "write code", "change the code", "edit",
+        "fix the bug", "update the file", "create file", "delete",
+        "run build", "build apk", "publish apk"
+    ]
+
+    risky_words = [
+        "gerald_bridge.py", "delete", "replace entire", "rewrite entire",
+        "database", "production", "nginx", "systemctl", "api key",
+        "env", "payment", "auth", "security"
+    ]
+
+    design_words = [
+        "screen", "ui", "layout", "redesign", "button", "look",
+        "screenshot", "home screen", "voice", "microphone"
+    ]
+
+    # Use exact phrase matching for APK intent (condition 3 from post-task spec)
+    if _has_explicit_apk_phrase(prompt):
+        intent = "apk_build"
+        should_build_apk = True
+    elif any(w in p for w in build_words):
+        intent = "implementation"
+        should_build_apk = False
+    elif any(w in p for w in design_words):
+        intent = "design_or_app_review"
+        should_build_apk = False
+    else:
+        intent = "conversation_or_planning"
+        should_build_apk = False
+
+    risk = "low"
+    if any(w in p for w in risky_words):
+        risk = "high"
+        reasons.append("Request touches risky/core system area.")
+    elif intent in ["implementation", "apk_build"]:
+        risk = "medium"
+        reasons.append("Request may modify code or trigger build workflow.")
+
+    should_delegate_to_claude = intent in ["implementation", "apk_build"]
+    should_ask_approval = risk in ["medium", "high"] or should_delegate_to_claude
+
+    if intent == "design_or_app_review":
+        reasons.append("Design/UI requests should be reviewed and planned before coding.")
+    if intent == "conversation_or_planning":
+        reasons.append("No implementation required yet.")
+
+    return RequestReview(
+        intent=intent,
+        risk=risk,
+        should_ask_approval=should_ask_approval,
+        should_delegate_to_claude=should_delegate_to_claude,
+        should_build_apk=should_build_apk,
+        reasons=reasons,
+    )
+
+
+def should_trigger_apk_build(
+    user_request: str,
+    returncode: int,
+    files_changed: list,
+    output: str,
+    error: str,
+    is_readonly: bool,
+    auto_build: bool = False,
+) -> bool:
+    """
+    Post-task gate: return True if and only if ALL conditions are met.
+
+    1. returncode == 0          — Claude task exited successfully
+    2. files_changed non-empty  — at least one file was actually modified
+    3. explicit APK phrase OR auto_build — user_request contains one of APK_BUILD_PHRASES,
+                                           or the caller has enabled auto-build mode
+    4. no provider/rate errors  — output/error contain no auth/rate/session failure signals
+    5. not readonly             — task was an implementation task, not investigation-only
+    """
+    if returncode != 0:
+        return False
+    if not files_changed:
+        return False
+    if not (_has_explicit_apk_phrase(user_request) or auto_build):
+        return False
+    if _has_provider_error(output, error):
+        return False
+    if is_readonly:
+        return False
+    return True
+
+
+def trigger_apk_build_if_warranted(
+    user_request: str,
+    returncode: int,
+    files_changed: list,
+    output: str,
+    error: str,
+    is_readonly: bool,
+    project_path: str = "/opt/Gerald/gerald_app",
+    flavor: str = "debug",
+    auto_build: bool = False,
+) -> bool:
+    """
+    Trigger a background APK build via the verified build system when all conditions pass.
+
+    Uses build_verifier.run_build_verification_sequence — never a raw subprocess call.
+    The build runs in a daemon thread so callers are not blocked.
+
+    Returns True if the build was triggered, False if any condition was not met or
+    if the build module could not be loaded.
+    """
+    if not should_trigger_apk_build(
+        user_request, returncode, files_changed, output, error, is_readonly, auto_build
+    ):
+        return False
+
+    try:
+        import build_verifier  # imported lazily to avoid circular deps at module load
+        t = threading.Thread(
+            target=build_verifier.run_build_verification_sequence,
+            args=(project_path, flavor),
+            daemon=True,
+        )
+        t.start()
+        return True
+    except Exception:
+        return False
+
+
+def format_review_for_prompt(review: RequestReview) -> str:
+    return f"""
+REQUEST REVIEW:
+- intent: {review.intent}
+- risk: {review.risk}
+- should_ask_approval: {review.should_ask_approval}
+- should_delegate_to_claude: {review.should_delegate_to_claude}
+- should_build_apk: {review.should_build_apk}
+- reasons: {', '.join(review.reasons) if review.reasons else 'none'}
+"""
+
+
+# ─── Review Agent V1 ──────────────────────────────────────────────────────────
+
+_GIT_ROOT = "/opt/Gerald"
+_FLUTTER_WORKER = "/opt/Gerald/gerald_app"
+_BACKEND_WORKER = "/opt/Gerald"
+
+# Minimum output length to consider Claude's response non-trivial
+_MIN_OUTPUT_CHARS = 30
+
+
+def _git_diff_stat(git_root: str) -> str:
+    """Return git diff --stat output (unstaged changes vs HEAD)."""
+    try:
+        r = subprocess.run(
+            ["git", "diff", "--stat"],
+            cwd=git_root, capture_output=True, text=True, timeout=15
+        )
+        return r.stdout.strip()
+    except Exception:
+        return ""
+
+
+def _git_changed_files(git_root: str) -> list:
+    """Return list of files with unstaged changes relative to the git root."""
+    try:
+        r = subprocess.run(
+            ["git", "diff", "--name-only"],
+            cwd=git_root, capture_output=True, text=True, timeout=15
+        )
+        return [ln.strip() for ln in r.stdout.splitlines() if ln.strip()]
+    except Exception:
+        return []
+
+
+def _scope_prefix(worker_dir: str) -> Optional[str]:
+    """Return the git-root-relative prefix expected for worker_dir, or None for root."""
+    abs_worker = os.path.abspath(worker_dir)
+    abs_root = os.path.abspath(_GIT_ROOT)
+    if abs_worker == abs_root:
+        return None  # backend root — all files in scope
+    try:
+        rel = os.path.relpath(abs_worker, abs_root)
+        return rel.rstrip("/") + "/"
+    except ValueError:
+        return None
+
+
+def review_task_result(
+    task_text: str,
+    project_name: str,
+    worker_dir: str,
+    claude_output: str,
+    files_changed: list,
+    returncode: int,
+    error: str = "",
+    edit_summary: Optional[dict] = None,
+) -> dict:
+    """
+    Review Agent V1: validate a completed Claude Code implementation task.
+
+    Checks (in order):
+      1. Non-zero exit code → FAIL
+      2. Provider / API rate-limit error in output or stderr → FAIL
+      3. No files changed (neither diff-tracker nor git agree anything changed) → FAIL
+      4. Files changed outside the expected worker_dir scope → FAIL
+      5. Claude produced no meaningful output (silent failure) → FAIL
+
+    Returns:
+      {
+        "verdict": "PASS" | "FAIL",
+        "reasons": ["..."],          # empty on PASS
+        "git_stat": "...",           # git diff --stat output
+        "git_changed_files": [...],  # file paths from git diff --name-only
+      }
+
+    This function is read-only and never modifies task state.
+    The caller (gerald_bridge.py) decides whether to mark the task complete.
+    """
+    reasons: list = []
+    edit_summary = edit_summary or {}
+
+    # 1. Non-zero return code
+    if returncode != 0:
+        reasons.append(
+            f"Claude Code exited with non-zero return code ({returncode})."
+        )
+
+    # 2. Provider / rate-limit errors
+    if _has_provider_error(claude_output, error):
+        reasons.append(
+            "Provider or API rate-limit error detected in Claude's output."
+        )
+
+    # 3. No changes detected
+    # Combine files_changed (lib/ subset) with edit_summary totals
+    summary_files = (
+        edit_summary.get("files_changed", [])
+        + edit_summary.get("files_added", [])
+        + edit_summary.get("files_deleted", [])
+    )
+    diff_tracker_found_changes = bool(summary_files) or bool(
+        edit_summary.get("total_lines_added", 0)
+    ) or bool(edit_summary.get("total_lines_removed", 0))
+
+    git_root = _GIT_ROOT
+    git_stat = _git_diff_stat(git_root)
+    git_changed = _git_changed_files(git_root)
+
+    any_lib_changes = bool(files_changed)
+    any_git_changes = bool(git_changed)
+
+    if not diff_tracker_found_changes and not any_lib_changes and not any_git_changes:
+        reasons.append("No files were changed — Claude appears to have made no edits.")
+
+    # 4. Files changed outside expected worker_dir scope
+    scope_prefix = _scope_prefix(worker_dir)
+    if scope_prefix is not None:
+        # Only check when worker_dir is a subdirectory (Flutter tasks)
+        for f in git_changed:
+            if not f.startswith(scope_prefix):
+                reasons.append(
+                    f"File changed outside expected scope ({scope_prefix.rstrip('/')}): {f}"
+                )
+
+    # 5. Silent failure — no meaningful output
+    if not (claude_output or "").strip() or len((claude_output or "").strip()) < _MIN_OUTPUT_CHARS:
+        reasons.append(
+            "Claude produced no meaningful output (possible silent failure or provider error)."
+        )
+
+    verdict = "FAIL" if reasons else "PASS"
+
+    print(
+        f"[review-agent-v1] verdict={verdict} project={project_name} "
+        f"worker={worker_dir} reasons={reasons}"
+    )
+
+    return {
+        "verdict": verdict,
+        "reasons": reasons,
+        "git_stat": git_stat,
+        "git_changed_files": git_changed,
+    }
