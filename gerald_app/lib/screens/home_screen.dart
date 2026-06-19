@@ -240,20 +240,6 @@ class _InputSectionState extends State<_InputSection> {
     final isSmall = widget.screenH < 620;
     final vPad = isSmall ? 8.0 : 10.0;
 
-    // When keyboard is up, just show the text field + compact utility bar.
-    if (widget.keyboardVisible) {
-      return Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(12, 6, 12, 0),
-            child: _buildTextField(state),
-          ),
-          _CompactBar(state: state),
-        ],
-      );
-    }
-
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -337,7 +323,6 @@ class _InputSectionState extends State<_InputSection> {
             child: TextField(
               controller: _controller,
               focusNode: _focusNode,
-              autofocus: true,
               minLines: 1,
               maxLines: 4,
               style: const TextStyle(
