@@ -56,3 +56,8 @@ current_status_backup.txt
 C:\\M/
 "C:\\M/"
 _archive_untracked_*/
+
+# Local app project folders
+MultiMe/
+RentMe/
+PlantBrain/
