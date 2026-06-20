@@ -13,10 +13,5 @@
     "name": "PlantBrain",
     "path": "/opt/Gerald/PlantBrain",
     "description": "Plant care AI"
-  },
-  {
-    "name": "MultiMe",
-    "path": "/opt/Gerald/MultiMe",
-    "description": ""
   }
 ]
