@@ -394,6 +394,12 @@ def should_use_backend_root(task_text: str) -> bool:
 
 # Returns the active worker directory for the given task and project.
 def get_worker_directory(task_text: str, project_name: str = "CommuteCoder") -> str:
+    # Non-CommuteCoder projects: resolve the registered path and use it directly.
+    if project_name and project_name.lower() != "commutecoder":
+        proj_path, _ = resolve_project(project_name)
+        print(f"[worker_dir] project={project_name} worker_dir={proj_path}")
+        return proj_path
+    # CommuteCoder: backend-only tasks run from the backend root; Flutter tasks use gerald_app.
     if should_use_backend_root(task_text):
         return "/opt/Gerald"
     return "/opt/Gerald/gerald_app"
