@@ -80,7 +80,8 @@ def resolve_project(project_name: str):
     for p in load_projects():
         if p["name"].lower() == project_name.lower():
             return p["path"], p["name"]
-    return BASE, "CommuteCoder"
+    # Named project not in registry → map to /opt/Gerald/{name}, never CommuteCoder
+    return os.path.join(BASE, project_name), project_name
 
 
 # ─── Project Brain ─────────────────────────────────────────────────────────────
