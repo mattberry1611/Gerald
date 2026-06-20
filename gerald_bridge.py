@@ -132,11 +132,14 @@ def create_brain_files(project_path: str, project_name: str, description: str = 
         ),
     }
     os.makedirs(project_path, exist_ok=True)
+    subprocess.run(["chown", "geraldbuild:geraldbuild", project_path], check=False)
     for fname, content in stubs.items():
         fpath = os.path.join(project_path, fname)
         if not os.path.exists(fpath):
             with open(fpath, "w", encoding="utf-8") as f:
                 f.write(content)
+            os.chmod(fpath, 0o664)
+            subprocess.run(["chown", "geraldbuild:geraldbuild", fpath], check=False)
 
 
 # ─── Voice command detection ──────────────────────────────────────────────────
@@ -1705,7 +1708,7 @@ def create_project(payload: dict):
     if not name:
         return {"ok": False, "error": "Project name is required"}
 
-    if not path:
+    if not path or "\\" in path:
         path = f"/opt/Gerald/{name}"
 
     projects = load_projects()
