@@ -262,7 +262,7 @@ Respond as Gerald.
         input=full_input,
     )
 
-    reply = response.output_text.strip()
+    reply = (response.output_text or '').strip()
 
     _save_turn(project, prompt, reply)
     _append_memory_if_needed(project, prompt, reply)

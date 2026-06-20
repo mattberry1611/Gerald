@@ -1427,33 +1427,49 @@ Return JSON with this schema:
 
 def run_direct_answer(task_text: str, project_name: str, message: str):
     outbox_file = get_project_outbox_file(project_name)
-    reply = message or ask_gerald(task_text, project_name)
-    data = {
-        "task": task_text,
-        "project": project_name,
-        "status": "done",
-        "returncode": 0,
-        "output": reply,
-        "summary": reply,
-        "error": "",
-        "timestamp": datetime.now(timezone.utc).isoformat()
-    }
-    write_outbox(data)
-    write_outbox(data, outbox_file)
-    if looks_like_clarification_request(reply):
-        write_task_state(
-            task_text,
-            project_name,
-            "needs_clarification",
-            "Gerald needs clarification",
-            files_changed=[],
-            output=reply,
-            error="",
-        )
-        write_status("needs_clarification", "Gerald needs clarification")
-    else:
-        write_task_state(task_text, project_name, "completed", "Gerald answered", files_changed=[], output=reply, error="")
-        write_status("idle", "Gerald answered")
+    try:
+        reply = message or ask_gerald(task_text, project_name)
+        data = {
+            "task": task_text,
+            "project": project_name,
+            "status": "done",
+            "returncode": 0,
+            "output": reply,
+            "summary": reply,
+            "error": "",
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        }
+        write_outbox(data)
+        write_outbox(data, outbox_file)
+        if looks_like_clarification_request(reply):
+            write_task_state(
+                task_text,
+                project_name,
+                "needs_clarification",
+                "Gerald needs clarification",
+                files_changed=[],
+                output=reply,
+                error="",
+            )
+            write_status("needs_clarification", "Gerald needs clarification")
+        else:
+            write_task_state(task_text, project_name, "completed", "Gerald answered", files_changed=[], output=reply, error="")
+            write_status("idle", "Gerald answered")
+    except Exception as e:
+        err = str(e)
+        data = {
+            "task": task_text,
+            "project": project_name,
+            "status": "error",
+            "returncode": 1,
+            "output": "",
+            "summary": "",
+            "error": err,
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        }
+        write_outbox(data, outbox_file)
+        write_status("error", err)
+        print("❌ RUN_DIRECT_ANSWER ERROR:", err)
 
 @app.post("/start")
 def start(payload: dict, background_tasks: BackgroundTasks):
