@@ -41,7 +41,8 @@ STATUS_FILE = os.path.join(BASE, "gerald_status.json")
 DEVICES_FILE = os.path.join(BASE, "gerald_devices.json")
 PROJECTS_FILE = os.path.join(BASE, "gerald_projects.json")
 APK_MANIFEST_FILE = os.path.join(BASE, "apk_manifest.json")
-APK_SERVE_FILE = os.path.join(BASE, "apk_serve", "gerald-latest.apk")
+APK_SERVE_DIR = os.path.join(BASE, "apk_serve")
+APK_SERVE_FILE = os.path.join(APK_SERVE_DIR, "gerald-latest.apk")
 
 CLAUDE_PS1 = r"C:\Users\Matt\AppData\Roaming\npm\claude.ps1"
 
