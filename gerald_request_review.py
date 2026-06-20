@@ -273,6 +273,16 @@ def _git_changed_files(git_root: str) -> list:
         return []
 
 
+def _is_runtime_artifact(filename: str) -> bool:
+    """Return True if filename is a known runtime state file that must never trigger scope violations."""
+    base = os.path.basename(filename)
+    if base == "active_task.json":
+        return True
+    if base.startswith("gerald_outbox_") and base.endswith(".json"):
+        return True
+    return False
+
+
 def _scope_prefix(worker_dir: str) -> Optional[str]:
     """Return the git-root-relative prefix expected for worker_dir, or None for root."""
     abs_worker = os.path.abspath(worker_dir)
@@ -358,6 +368,8 @@ def review_task_result(
     if scope_prefix is not None:
         # Only check when worker_dir is a subdirectory (Flutter tasks)
         for f in git_changed:
+            if _is_runtime_artifact(f):
+                continue
             if not f.startswith(scope_prefix):
                 reasons.append(
                     f"File changed outside expected scope ({scope_prefix.rstrip('/')}): {f}"
