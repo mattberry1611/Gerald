@@ -1498,7 +1498,7 @@ def start(payload: dict, background_tasks: BackgroundTasks):
         if any(p["name"].lower() == detected_name.lower() for p in projects):
             msg = f"Project '{detected_name}' already exists."
         else:
-            proj_path = f"C:\\{detected_name}"
+            proj_path = f"/opt/Gerald/{detected_name}"
             try:
                 create_brain_files(proj_path, detected_name)
                 new_proj = {"name": detected_name, "path": proj_path, "description": ""}
@@ -1706,7 +1706,7 @@ def create_project(payload: dict):
         return {"ok": False, "error": "Project name is required"}
 
     if not path:
-        path = f"C:\\{name}"
+        path = f"/opt/Gerald/{name}"
 
     projects = load_projects()
 
