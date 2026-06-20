@@ -1,0 +1,22 @@
+[
+  {
+    "name": "CommuteCoder",
+    "path": "/opt/Gerald",
+    "description": "Voice-driven AI coding supervisor"
+  },
+  {
+    "name": "RentMe",
+    "path": "/opt/Gerald/RentMe",
+    "description": "Rental management app"
+  },
+  {
+    "name": "PlantBrain",
+    "path": "/opt/Gerald/PlantBrain",
+    "description": "Plant care AI"
+  },
+  {
+    "name": "MultiMe",
+    "path": "/opt/Gerald/MultiMe",
+    "description": ""
+  }
+]
