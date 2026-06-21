@@ -1,0 +1,18 @@
+{
+  "issues": {
+    "brain v3 fix question intent repetition_5d1ee687": {
+      "description": "Brain V3 Fix \u2014 Question Intent + Repetition Breaker\n\nProblem:\nGerald answered a visual outcome question with a task status answer.\n\nExample:\nMatt asked: \u201cIs the last task complete?\u201d\nGerald correctly a",
+      "project": "CommuteCoder",
+      "type": "user_correction",
+      "occurrences": [
+        {
+          "timestamp": "2026-06-21T19:33:58.964545+00:00",
+          "task": ""
+        }
+      ],
+      "first_seen": "2026-06-21T19:33:58.964545+00:00",
+      "last_seen": "2026-06-21T19:33:58.964545+00:00",
+      "is_recurring": false
+    }
+  }
+}

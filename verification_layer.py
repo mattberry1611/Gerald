@@ -9,6 +9,12 @@ import subprocess
 from pathlib import Path
 from typing import Dict, List, Optional
 
+# Default paths for Flutter evidence capture
+FLUTTER_ANALYZE_LOG = "/tmp/gerald_flutter_analyze.log"
+FLUTTER_ANALYZE_EXIT = "/tmp/gerald_flutter_analyze.exit"
+FLUTTER_BUILD_LOG = "/tmp/gerald_flutter_build.log"
+FLUTTER_BUILD_EXIT = "/tmp/gerald_flutter_build.exit"
+
 
 class VerificationResult:
     def __init__(self, passed: bool, message: str, details: Dict = None):
@@ -81,6 +87,42 @@ class VerificationLayer:
         
         return result
     
+    def _verify_ui_components(self, app_js_path: str = None) -> VerificationResult:
+        """Supervisor check: detect duplicate or missing required UI components."""
+        try:
+            from ui_component_verifier import verify_ui_components
+            result = verify_ui_components(app_js_path)
+            if result["verdict"] == "PASS":
+                return VerificationResult(True, "UI components OK", result)
+            issues_text = "; ".join(result.get("issues", []))
+            return VerificationResult(False, f"UI component issues: {issues_text}", result)
+        except Exception as e:
+            return VerificationResult(False, f"UI component check error: {e}")
+
+    def _verify_flutter_analyze(
+        self,
+        cwd: str,
+        log_path: str,
+        exit_path: str,
+    ) -> VerificationResult:
+        """Run flutter analyze with full stdout/stderr/exit-code evidence capture."""
+        try:
+            from command_evidence_capture import run_with_evidence
+            evidence = run_with_evidence(
+                command="flutter analyze",
+                cwd=cwd,
+                log_path=log_path,
+                exit_path=exit_path,
+                timeout=120,
+            )
+            msg = (
+                f"flutter analyze exit_code={evidence['exit_code']} "
+                f"log={evidence['log_path']}"
+            )
+            return VerificationResult(evidence["passed"], msg, evidence)
+        except Exception as e:
+            return VerificationResult(False, f"flutter_analyze check error: {e}")
+
     def _hash_file(self, filepath: str) -> str:
         """Generate hash of file contents."""
         hasher = hashlib.md5()
@@ -102,17 +144,18 @@ class VerificationLayer:
         [
             {"type": "exists", "file": "/path/to/file"},
             {"type": "changed", "file": "/path/to/file", "before_hash": "abc123"},
-            {"type": "service", "command": "curl http://localhost:8000/health"}
+            {"type": "service", "command": "curl http://localhost:8000/health"},
+            {"type": "ui_components", "file": "/opt/Gerald/dashboard/app.js"},
         ]
-        
+
         Returns: {"passed": bool, "results": [...], "blocked": bool}
         """
         results = []
         all_passed = True
-        
+
         for check in checks:
             check_type = check.get("type")
-            
+
             if check_type == "exists":
                 result = self.verify_with_retry(
                     self.verify_file_exists,
@@ -128,6 +171,14 @@ class VerificationLayer:
                 result = self.verify_with_retry(
                     self.verify_service_running,
                     check["command"]
+                )
+            elif check_type == "ui_components":
+                result = self._verify_ui_components(check.get("file"))
+            elif check_type == "flutter_analyze":
+                result = self._verify_flutter_analyze(
+                    check.get("cwd", "/opt/Gerald/gerald_app"),
+                    check.get("log_path", FLUTTER_ANALYZE_LOG),
+                    check.get("exit_path", FLUTTER_ANALYZE_EXIT),
                 )
             else:
                 result = VerificationResult(False, f"Unknown check type: {check_type}")
