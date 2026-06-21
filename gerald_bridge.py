@@ -5,6 +5,7 @@ import subprocess
 import signal
 import time
 import shlex
+import uuid
 import urllib.request
 import urllib.error
 from anthropic import Anthropic
@@ -20,10 +21,11 @@ from fastapi.middleware.cors import CORSMiddleware
 import build_verifier
 import multi_ai_router
 from gerald_brain import inject_brain_context
-from gerald_openai_brain import ask_gerald, decide_supervisor_action
+from gerald_openai_brain import ask_gerald, decide_supervisor_action, generate_risk_review
 from gerald_vision import review_image
 from gerald_request_review import review_task_result
 import gerald_issue_memory
+import gerald_session_state as _gss
 from verification_layer import VerificationLayer
 
 app = FastAPI()
@@ -43,6 +45,221 @@ PROJECTS_FILE = os.path.join(BASE, "gerald_projects.json")
 APK_MANIFEST_FILE = os.path.join(BASE, "apk_manifest.json")
 APK_SERVE_DIR = os.path.join(BASE, "apk_serve")
 APK_SERVE_FILE = os.path.join(APK_SERVE_DIR, "gerald-latest.apk")
+
+# ─── V4 Agent Kernel: Persistent Task Result Layer ────────────────────────────
+TASK_HISTORY_MAX = 200
+STATUS_CHECK_FILE = os.path.join(BASE, "gerald_last_status_check.json")
+
+
+def _generate_task_id() -> str:
+    return uuid.uuid4().hex[:12]
+
+
+def _get_task_history_file(project_name: str) -> str:
+    safe = project_name.replace(" ", "_").replace("/", "_").replace("\\", "_")
+    return os.path.join(BASE, f"gerald_task_history_{safe}.json")
+
+
+def _append_task_history(record: dict, project_name: str) -> None:
+    """Append a completed real-task record to the per-project durable history."""
+    path = _get_task_history_file(project_name)
+    history = []
+    if os.path.exists(path):
+        try:
+            with open(path, "r", encoding="utf-8") as _f:
+                history = json.load(_f)
+            if not isinstance(history, list):
+                history = []
+        except Exception:
+            history = []
+    history.append(record)
+    if len(history) > TASK_HISTORY_MAX:
+        history = history[-TASK_HISTORY_MAX:]
+    try:
+        with open(path, "w", encoding="utf-8") as _f:
+            json.dump(history, _f, indent=2)
+    except Exception as _e:
+        print(f"[task_history] Failed to append: {_e}")
+
+
+_STATUS_CHECK_IMPERATIVE_STARTERS = (
+    "update ", "implement ", "create ", "build ", "add ", "fix ", "write ",
+    "make ", "change ", "delete ", "remove ", "migrate ", "deploy ", "generate ",
+    "refactor ", "redesign ", "upgrade ", "install ", "configure ", "setup ",
+    "move ", "rename ", "replace ", "modify ", "edit ", "convert ", "extend ",
+    "enable ", "disable ", "improve ", "optimize ", "enhance ", "show ", "display ",
+    "render ", "style ", "design ", "format ", "clean ", "sort ", "filter ",
+    "fetch ", "load ", "save ", "send ", "push ", "test ", "verify ",
+)
+
+
+def _is_status_check_task(text: str) -> bool:
+    """Return True if text is a status/check query rather than an implementation task.
+
+    Uses keyword + combination matching with typo tolerance for common variants
+    (e.g. 'lastbtask', 'lasttask').  Long messages (>15 words) and messages that
+    open with an imperative verb are treated as implementation requests, not status checks.
+    """
+    lowered = (text or "").lower().strip()
+    if not lowered:
+        return False
+
+    # Long messages are almost always implementation requests
+    if len(lowered.split()) > 15:
+        return False
+
+    # Imperative-verb openers signal a task, not a status check
+    if any(lowered.startswith(s) for s in _STATUS_CHECK_IMPERATIVE_STARTERS):
+        return False
+
+    # Typo-normalised text: strip all non-alpha for fuzzy substring matching
+    norm = "".join(c for c in lowered if c.isalpha())
+
+    done_words = ("done", "complete", "finished", "finish")
+    running_words = ("running", "working", "active")
+    state_words = done_words + running_words + ("status",)
+    interrogatives = ("is it", "is the", "are you", "did it", "have you", "has it", "is claude")
+
+    # "last task" with typo tolerance + any state word
+    has_last_task = (
+        ("last" in lowered and "task" in lowered)
+        or any(v in norm for v in ("lasttask", "lastbtask", "lastask", "lastetask"))
+    )
+    if has_last_task and any(w in lowered for w in state_words):
+        return True
+
+    # Interrogative + state word: "is it complete", "did it finish", "is claude running"
+    if any(iq in lowered for iq in interrogatives) and any(w in lowered for w in state_words):
+        return True
+
+    # Standalone "status" / "status check" (not embedded in an implementation sentence)
+    if lowered.strip("?!. ") in ("status", "status check"):
+        return True
+
+    # "what is the status", "what's the status"
+    if "what" in lowered and "status" in lowered:
+        return True
+
+    # "still running/working/done"
+    if "still" in lowered and any(w in lowered for w in running_words + done_words):
+        return True
+
+    return False
+
+
+_TERMINAL_CMD_PREFIXES = (
+    "curl ", "cat ", "grep ", "ls ", "ls\t", "cd ", "sed ", "systemctl ",
+)
+
+_LAST_RESULT_OUTPUT_PHRASES = (
+    "last task result",
+    "task/last-result",
+    "/task/last-result",
+    "last result is",
+    "the last task is complete",
+)
+
+
+def _is_terminal_command_task(text: str) -> bool:
+    """Return True if text is a raw shell/terminal command rather than a user task."""
+    lowered = (text or "").lower().lstrip()
+    return any(lowered.startswith(p) for p in _TERMINAL_CMD_PREFIXES)
+
+
+def _output_reports_last_result(output: str, summary: str) -> bool:
+    """Return True if the output is just a meta-report of /task/last-result content."""
+    combined = ((output or "") + " " + (summary or "")).lower()
+    return any(phrase in combined for phrase in _LAST_RESULT_OUTPUT_PHRASES)
+
+
+def _get_last_real_task_result(project_name: str) -> dict:
+    """Return the latest successful real user task result from durable history.
+
+    Excludes:
+    - status/check questions
+    - terminal command tasks
+    - failed/error/contract_failed/partial/unknown records
+    - records with non-zero returncode
+    - empty output/summary records
+    - records that only report another last-result
+    """
+    path = _get_task_history_file(project_name)
+    if not os.path.exists(path):
+        return {}
+
+    command_prefixes = (
+        "curl ", "cat ", "grep ", "ls ", "cd ", "sed ", "systemctl ",
+        "python ", "python3 ", "tail ", "head ", "nano ", "vim "
+    )
+
+    bad_statuses = {
+        "error", "failed", "contract_failed", "partial", "unknown",
+        "timed_out", "timeout"
+    }
+
+    def _is_command_task(task_text: str) -> bool:
+        lowered = (task_text or "").lower().strip()
+        return lowered.startswith(command_prefixes)
+
+    def _reports_last_result(output_text: str, summary_text: str) -> bool:
+        combined = f"{output_text or ''} {summary_text or ''}".lower()
+        return (
+            "last task result is" in combined
+            or "/task/last-result" in combined
+            or "the last task is complete" in combined
+            or "output was:" in combined
+        )
+
+    def _has_useful_output(record: dict) -> bool:
+        output = (record.get("output") or "").strip()
+        summary = (record.get("summary") or "").strip()
+        return bool(output or summary)
+
+    def _is_success(record: dict) -> bool:
+        status = (record.get("status") or "").lower().strip()
+        if status in bad_statuses:
+            return False
+
+        returncode = record.get("returncode", 0)
+        try:
+            if int(returncode) != 0:
+                return False
+        except Exception:
+            return False
+
+        return True
+
+    try:
+        with open(path, "r", encoding="utf-8") as _f:
+            history = json.load(_f)
+
+        if not isinstance(history, list):
+            return {}
+
+        for record in reversed(history):
+            task_text = record.get("task", "")
+
+            if _is_status_check_task(task_text):
+                continue
+
+            if _is_command_task(task_text):
+                continue
+
+            if not _is_success(record):
+                continue
+
+            if not _has_useful_output(record):
+                continue
+
+            if _reports_last_result(record.get("output", ""), record.get("summary", "")):
+                continue
+
+            return record
+
+    except Exception:
+        pass
+
+    return {}
 
 CLAUDE_PS1 = r"C:\Users\Matt\AppData\Roaming\npm\claude.ps1"
 
@@ -408,6 +625,7 @@ def get_worker_directory(task_text: str, project_name: str = "CommuteCoder") -> 
 
 def run_claude_code_worker(task_text: str, project_name: str = "CommuteCoder"):
     """Run approved implementation tasks through real Claude Code CLI."""
+    _task_id = _generate_task_id()
     project_outbox = get_project_outbox_file(project_name)
 
     worker_dir = get_worker_directory(task_text, project_name)
@@ -445,8 +663,56 @@ Rules:
     safe_prompt = inject_brain_context(safe_prompt, _proj_path, project_name)
     print(f"[brain] inject_brain_context (worker): {len(safe_prompt)} chars, project={project_name}, path={_proj_path}")
 
-    write_task_state(task_text, project_name, "executing", "Claude Code is editing files")
+    # ── Planner: Generate Task Contract before Claude runs ────────────────
+    print("[planner] Generating task contract…")
+    try:
+        _contract = create_task_contract(task_text, project_name)
+    except RuntimeError as _planner_exc:
+        print(f"[planner] FATAL: {_planner_exc}")
+        write_task_state(task_text, project_name, "failed",
+                         f"Planner: {_planner_exc}")
+        write_status("error", "Planner: Task Contract generation failed — manual review required")
+        _err_data = {
+            "task": task_text, "project": project_name,
+            "status": "error", "output": "", "error": str(_planner_exc),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+        write_outbox(_err_data)
+        write_outbox(_err_data, project_outbox)
+        return
+    print(f"[planner] intent={_contract.get('user_intent', '')[:80]}")
+    try:
+        _gss.log_event(project_name, "task_contract",
+                       intent=_contract.get("user_intent", "")[:200],
+                       n_requirements=len(_contract.get("requirements_checklist", [])))
+    except Exception:
+        pass
+    if _contract.get("is_large_task") and _contract.get("phases"):
+        _phases = _contract["phases"]
+        print(f"[planner] Large task detected — scoping to Phase 1 of {len(_phases)}")
+        task_text = f"[PHASE 1 of {len(_phases)}]\n{_phases[0]}\n\n[Full task for context]\n{task_text}"
+
+    # ── Risk Review Layer ─────────────────────────────────────────────────
+    print("[risk] Generating pre-execution risk review…")
+    try:
+        _risk_review = generate_risk_review(_contract, project_name)
+        _contract["risk_review"] = _risk_review
+        _high = _risk_review.get("high_risk_items", [])
+        if _high:
+            print(f"[risk] HIGH-RISK items: {_high}")
+    except Exception as _risk_exc:
+        print(f"[risk] Risk review skipped: {_risk_exc}")
+
+    write_task_state(task_text, project_name, "executing", "Claude Code is editing files", contract=_contract, task_id=_task_id)
     write_status("executing", "Claude Code editing files")
+
+    # Inject session history (corrections, prior failures) so Claude Code has context
+    try:
+        _sess_ctx_worker = _gss.load_session_context(project_name, limit=8)
+        if _sess_ctx_worker:
+            safe_prompt += f"\n\n{_sess_ctx_worker}"
+    except Exception:
+        pass
 
     try:
         proc = subprocess.Popen(
@@ -512,6 +778,14 @@ Rules:
 
         changed_files = get_changed_files_under_lib(worker_dir)
 
+        try:
+            _gss.log_event(project_name, "claude_result",
+                           status="done" if result.returncode == 0 else "error",
+                           returncode=result.returncode,
+                           summary=output[:300])
+        except Exception:
+            pass
+
         if result.returncode == 0:
             review = review_task_result(
                 task_text=task_text,
@@ -522,58 +796,161 @@ Rules:
                 returncode=result.returncode,
                 error=error,
             )
-            if review["verdict"] == "PASS":
-                write_task_state(
-                    task_text,
-                    project_name,
-                    "completed",
-                    "Claude Code task finished",
-                    files_changed=changed_files,
-                    output=output,
-                    error=error,
-                )
-                data = {
-                    "task": task_text,
-                    "project": project_name,
-                    "status": "done",
-                    "returncode": result.returncode,
-                    "output": output,
-                    "error": error,
-                    "verification": _verification,
-                    "timestamp": datetime.now(timezone.utc).isoformat()
-                }
-                write_outbox(data)
-                write_outbox(data, project_outbox)
-                write_status("idle", "Claude Code task finished")
+            # ── Auditor: always the sole source of truth for task completion ──
+            try:
+                _ts = read_task_state()
+                _task_contract = _ts.get("contract", {})
+            except Exception:
+                _task_contract = {}
+            if _task_contract:
+                _audit = audit_task_contract(_task_contract, output, changed_files, project_name)
+            elif review["verdict"] == "PASS":
+                _audit = {"verdict": "UNKNOWN", "met": [], "missing": [], "missing_evidence": [], "notes": "No contract — cannot confirm COMPLETE", "audited_at": now_iso()}
             else:
-                reasons_text = "; ".join(review["reasons"])
+                _reasons = review.get("reasons", ["unknown"])
+                _audit = {"verdict": "FAILED", "met": [], "missing": _reasons, "notes": f"No contract; review rejected: {'; '.join(_reasons)[:100]}", "audited_at": now_iso()}
+            # Attach review verdict as non-authoritative context
+            _audit["review_verdict"] = review["verdict"]
+            if review["verdict"] != "PASS":
+                _audit["review_reasons"] = review.get("reasons", [])
+            _av = _audit.get("verdict", "UNKNOWN")
+            _missing = _audit.get("missing", [])
+
+            # URO final gate: if user-reported conflict exists, block COMPLETE before branching
+            if _av == "COMPLETE":
+                try:
+                    from ui_verifier import check_uro_conflict as _uro_gate
+                    _uro_r = _uro_gate(project_name)
+                    if _uro_r["conflict"]:
+                        _phrases = _uro_r["evidence"].get("uro_phrases", [])
+                        _audit["verdict"] = "FAILED"
+                        _audit.setdefault("missing", []).insert(
+                            0, f"URO gate: user reported mismatch {_phrases} not confirmed resolved"
+                        )
+                        _audit["notes"] = f"URO gate: {_audit.get('notes', 'user reality conflict')}"
+                        _av = "FAILED"
+                        _missing = _audit.get("missing", [])
+                except Exception as _uro_gate_ex:
+                    print(f"[worker] URO gate error: {_uro_gate_ex}")
+
+            try:
+                _gss.log_event(project_name, "audit_result",
+                               verdict=_av,
+                               notes=_audit.get("notes", "")[:200],
+                               missing=list(_missing)[:5])
+            except Exception:
+                pass
+
+            if _av == "FAILED":
+                _ms = "; ".join(_missing)[:120]
                 write_task_state(
-                    task_text,
-                    project_name,
-                    "review_failed",
-                    f"Review Agent V1 rejected: {reasons_text}",
-                    files_changed=changed_files,
-                    output=output,
-                    error=error,
+                    task_text, project_name, "contract_failed",
+                    f"Auditor: requirements not met — {_ms}",
+                    files_changed=changed_files, output=output, error=error, audit=_audit,
                 )
                 data = {
-                    "task": task_text,
-                    "project": project_name,
-                    "status": "review_failed",
-                    "returncode": result.returncode,
-                    "output": output,
-                    "error": error,
-                    "review_verdict": "FAIL",
-                    "review_reasons": review["reasons"],
+                    "task_id": _task_id,
+                    "task": task_text, "project": project_name,
+                    "status": "contract_failed", "returncode": result.returncode,
+                    "output": output, "error": error,
+                    "audit_verdict": "FAILED", "audit_missing": _missing,
+                    "audit_notes": _audit.get("notes", ""),
+                    "review_verdict": review["verdict"],
                     "verification": _verification,
                     "timestamp": datetime.now(timezone.utc).isoformat()
                 }
                 write_outbox(data)
                 write_outbox(data, project_outbox)
-                write_status(
-                    "error",
-                    f"Review Agent V1 rejected: {review['reasons'][0] if review['reasons'] else 'unknown'}"
+                _append_task_history(data, project_name)
+                write_status("error", "Auditor: contract requirements not met")
+                try:
+                    _gss.log_event(project_name, "outcome", status="contract_failed", detail=_ms[:150])
+                    if _missing:
+                        _gss.append_lesson(
+                            project_name,
+                            f"Auditor FAILED: {_contract.get('user_intent','')[:100]}\n"
+                            f"Missing: {'; '.join(str(m)[:60] for m in _missing[:3])}\n"
+                            f"Audit notes: {_audit.get('notes','')[:150]}"
+                        )
+                except Exception:
+                    pass
+            elif _av == "PARTIAL":
+                _ms = "; ".join(_missing)[:120]
+                write_task_state(
+                    task_text, project_name, "partial",
+                    f"Auditor: partial — {_ms}",
+                    files_changed=changed_files, output=output, error=error, audit=_audit,
                 )
+                data = {
+                    "task_id": _task_id,
+                    "task": task_text, "project": project_name,
+                    "status": "partial", "returncode": result.returncode,
+                    "output": output, "error": error,
+                    "audit_verdict": "PARTIAL", "audit_missing": _missing,
+                    "audit_notes": _audit.get("notes", ""),
+                    "review_verdict": review["verdict"],
+                    "verification": _verification,
+                    "timestamp": datetime.now(timezone.utc).isoformat()
+                }
+                write_outbox(data)
+                write_outbox(data, project_outbox)
+                _append_task_history(data, project_name)
+                write_status("idle", "Task partial — some requirements missing")
+                try:
+                    _gss.log_event(project_name, "outcome", status="partial", detail=_ms[:150])
+                except Exception:
+                    pass
+            elif _av == "COMPLETE":
+                write_task_state(
+                    task_text, project_name, "completed",
+                    "Claude Code task finished",
+                    files_changed=changed_files, output=output, error=error, audit=_audit,
+                )
+                data = {
+                    "task_id": _task_id,
+                    "task": task_text, "project": project_name,
+                    "status": "done", "returncode": result.returncode,
+                    "output": output, "error": error,
+                    "verification": _verification, "audit_verdict": "COMPLETE",
+                    "review_verdict": review["verdict"],
+                    "timestamp": datetime.now(timezone.utc).isoformat()
+                }
+                write_outbox(data)
+                write_outbox(data, project_outbox)
+                _append_task_history(data, project_name)
+                write_status("idle", "Claude Code task finished")
+                try:
+                    _gss.log_event(project_name, "outcome", status="completed",
+                                   detail="All requirements met")
+                except Exception:
+                    pass
+            else:
+                # UNKNOWN or any unexpected verdict — audit could not determine compliance; never COMPLETE
+                _note = _audit.get("notes", "audit result indeterminate")
+                write_task_state(
+                    task_text, project_name, "contract_failed",
+                    f"Auditor: indeterminate — {_note}",
+                    files_changed=changed_files, output=output, error=error, audit=_audit,
+                )
+                data = {
+                    "task_id": _task_id,
+                    "task": task_text, "project": project_name,
+                    "status": "contract_failed", "returncode": result.returncode,
+                    "output": output, "error": error,
+                    "audit_verdict": _av, "audit_notes": _note,
+                    "review_verdict": review["verdict"],
+                    "verification": _verification,
+                    "timestamp": datetime.now(timezone.utc).isoformat()
+                }
+                write_outbox(data)
+                write_outbox(data, project_outbox)
+                _append_task_history(data, project_name)
+                write_status("error", f"Auditor: indeterminate ({_av}) — {_note[:80]}")
+                try:
+                    _gss.log_event(project_name, "outcome", status="contract_failed",
+                                   detail=f"Audit verdict={_av}: {_note[:120]}")
+                except Exception:
+                    pass
         else:
             write_task_state(
                 task_text,
@@ -585,6 +962,7 @@ Rules:
                 error=error,
             )
             data = {
+                "task_id": _task_id,
                 "task": task_text,
                 "project": project_name,
                 "status": "error",
@@ -596,7 +974,13 @@ Rules:
             }
             write_outbox(data)
             write_outbox(data, project_outbox)
+            _append_task_history(data, project_name)
             write_status("error", "Claude Code task failed")
+            try:
+                _gss.log_event(project_name, "outcome", status="failed",
+                               detail=f"Claude Code exited {result.returncode}")
+            except Exception:
+                pass
             # ── Reasoning Layer V2: track repeated task failures ───────────────
             _failure_text = result.stderr.strip() or result.stdout.strip()
             _rl2_alert = gerald_issue_memory.record_task_failure(_failure_text, task_text, project_name)
@@ -605,6 +989,7 @@ Rules:
 
     except subprocess.TimeoutExpired:
         data = {
+            "task_id": _task_id,
             "task": task_text,
             "project": project_name,
             "status": "error",
@@ -615,6 +1000,7 @@ Rules:
         }
         write_outbox(data)
         write_outbox(data, project_outbox)
+        _append_task_history(data, project_name)
         write_status("error", "Claude Code task timed out")
         fail_task("Claude Code task timed out")
 
@@ -628,8 +1014,25 @@ TASK_STATE_FILE = os.path.join(BASE, "active_task.json")
 def now_iso():
     return datetime.now(timezone.utc).isoformat()
 
-def write_task_state(task: str, project: str, stage: str, detail: str = "", files_changed=None, output: str = "", error: str = ""):
+def write_task_state(task: str, project: str, stage: str, detail: str = "", files_changed=None, output: str = "", error: str = "", contract: dict = None, audit: dict = None, task_id: str = None):
+    # Preserve contract/audit/started/task_id from existing file when not explicitly updated
+    _existing_contract = None
+    _existing_audit = None
+    _existing_started = None
+    _existing_task_id = None
+    if os.path.exists(TASK_STATE_FILE):
+        try:
+            with open(TASK_STATE_FILE, "r", encoding="utf-8") as _f:
+                _existing = json.load(_f)
+                _existing_contract = _existing.get("contract")
+                _existing_audit = _existing.get("audit")
+                _existing_started = _existing.get("started")
+                _existing_task_id = _existing.get("task_id")
+        except Exception:
+            pass
+
     data = {
+        "task_id": task_id or _existing_task_id or "",
         "task": task,
         "project": project,
         "stage": stage,
@@ -640,7 +1043,19 @@ def write_task_state(task: str, project: str, stage: str, detail: str = "", file
         "updated": now_iso()
     }
     if stage in ["executing", "planning", "verifying"]:
-        data["started"] = data.get("started", now_iso())
+        data["started"] = _existing_started or now_iso()
+    elif _existing_started:
+        data["started"] = _existing_started
+
+    effective_contract = contract if contract is not None else _existing_contract
+    if effective_contract:
+        data["contract"] = effective_contract
+
+    # A new contract means a new task — never carry a stale audit forward
+    effective_audit = audit if audit is not None else (None if contract is not None else _existing_audit)
+    if effective_audit:
+        data["audit"] = effective_audit
+
     with open(TASK_STATE_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2)
     return data
@@ -663,6 +1078,250 @@ def looks_like_clarification_request(output: str) -> bool:
         "i will not take action until",
     ]
     return any(p in lower for p in phrases)
+
+
+# ─── Planner: Task Contract ────────────────────────────────────────────────────
+
+def _parse_contract_json(raw: str) -> dict:
+    """Strip markdown fences, find the outermost JSON object, and parse it."""
+    if raw.startswith("```"):
+        raw = re.sub(r"^```[a-z]*\n?", "", raw)
+        raw = re.sub(r"\n?```$", "", raw.rstrip())
+    raw = raw.strip()
+    start = raw.find("{")
+    end = raw.rfind("}")
+    if start == -1 or end == -1 or end <= start:
+        raise ValueError(f"No JSON object found in Planner response (len={len(raw)})")
+    return json.loads(raw[start:end + 1])
+
+
+def create_task_contract(task_text: str, project_name: str) -> dict:
+    """Generate a structured Task Contract. Retries once on parse failure. Raises on double failure."""
+    client = Anthropic()
+
+    _sess_ctx_str = ""
+    try:
+        _sess_ctx_str = _gss.load_session_context(project_name, limit=6)
+    except Exception:
+        pass
+    _sess_section = (
+        f"\n\nSESSION HISTORY (recent corrections and outcomes — use for context only):\n{_sess_ctx_str}\n"
+        if _sess_ctx_str else ""
+    )
+
+    primary_prompt = f"""You are Gerald's Planner. Convert Matt's request into a structured Task Contract as JSON.
+
+Matt's request: {task_text}
+Project: {project_name}
+{_sess_section}
+Return ONLY valid JSON with this exact schema (no markdown, no commentary):
+{{
+  "user_intent": "one-sentence summary of what Matt wants",
+  "project": "{project_name}",
+  "scope": "what is in scope — be specific",
+  "non_negotiables": ["constraint 1", "constraint 2"],
+  "requirements_checklist": [
+    "requirement 1",
+    "requirement 2"
+  ],
+  "likely_files": ["file1.py", "file2.js"],
+  "forbidden_files": ["file_never_touch.py"],
+  "definition_of_done": "exact deliverable condition to mark COMPLETE",
+  "verification_checklist": ["check 1", "check 2"],
+  "evidence_required": [
+    {{
+      "check": "description of the verification step",
+      "evidence_type": "command_output | file_contents | endpoint_response",
+      "description": "what real evidence must be captured (e.g. actual stdout of X command, contents of Y file, HTTP response from Z endpoint)"
+    }}
+  ],
+  "recommended_execution_steps": ["step 1", "step 2"],
+  "is_large_task": false,
+  "phases": []
+}}
+
+CRITICAL extraction rules:
+- Extract EVERY numbered requirement from Matt's request as a SEPARATE item in requirements_checklist. Do NOT group, collapse, or summarise multiple requirements into one item.
+- If Matt listed 12 numbered requirements, requirements_checklist must contain exactly 12 entries.
+- For evidence_required: include one entry for every item in verification_checklist that requires running a command, reading a file, or calling an endpoint to confirm success. Leave the array empty only if ALL checks are purely code-review (no execution or inspection needed).
+- If the task has more than 5 major independent features or requires multiple long Claude sessions, set is_large_task=true and list each phase in the phases array (brief one-line description per phase).
+Return ONLY the JSON object."""
+
+    err1 = None
+    try:
+        msg = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=4096,
+            messages=[{"role": "user", "content": primary_prompt}],
+        )
+        raw = "\n".join(
+            b.text for b in msg.content if getattr(b, "type", "") == "text"
+        ).strip()
+        contract = _parse_contract_json(raw)
+        contract["generated_at"] = now_iso()
+        n_reqs = len(contract.get("requirements_checklist", []))
+        print(f"[planner] contract OK — {n_reqs} requirements extracted")
+        return contract
+    except Exception as e:
+        err1 = e
+        print(f"[planner] Primary extraction failed: {e}. Retrying with conservative prompt…")
+
+    # Conservative retry: simpler prompt, flat schema, no nested evidence objects
+    retry_prompt = f"""You are Gerald's Planner. Emergency contract extraction — parse Matt's request into JSON.
+
+Matt's request: {task_text[:6000]}
+Project: {project_name}
+
+Return ONLY valid JSON — no markdown fences, no commentary, nothing outside the braces:
+{{
+  "user_intent": "one-sentence summary",
+  "project": "{project_name}",
+  "scope": "what is in scope",
+  "non_negotiables": ["constraint 1"],
+  "requirements_checklist": ["req 1", "req 2"],
+  "likely_files": ["file.py"],
+  "forbidden_files": [],
+  "definition_of_done": "COMPLETE when all requirements are met",
+  "verification_checklist": ["check 1"],
+  "evidence_required": [],
+  "recommended_execution_steps": ["step 1"],
+  "is_large_task": false,
+  "phases": []
+}}
+
+MANDATORY: List EVERY numbered requirement from Matt's request as a separate string in requirements_checklist. Output JSON only — nothing else."""
+
+    try:
+        msg2 = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=4096,
+            messages=[{"role": "user", "content": retry_prompt}],
+        )
+        raw2 = "\n".join(
+            b.text for b in msg2.content if getattr(b, "type", "") == "text"
+        ).strip()
+        contract2 = _parse_contract_json(raw2)
+        contract2["generated_at"] = now_iso()
+        contract2["planner_retry"] = True
+        n_reqs2 = len(contract2.get("requirements_checklist", []))
+        print(f"[planner] Retry contract OK — {n_reqs2} requirements extracted")
+        return contract2
+    except Exception as e2:
+        raise RuntimeError(
+            f"Task Contract generation failed after 2 attempts. "
+            f"Attempt 1: {err1}. Attempt 2: {e2}. "
+            "Manual review required — do not proceed."
+        )
+
+
+def audit_task_contract(contract: dict, claude_output: str, files_changed: list, project_name: str = "CommuteCoder") -> dict:
+    """Auditor: compare Claude's delivered result against the Task Contract requirements."""
+    try:
+        requirements = contract.get("requirements_checklist", [])
+        definition_of_done = contract.get("definition_of_done", "")
+        evidence_required = contract.get("evidence_required", [])
+        if not requirements and not definition_of_done:
+            return {"verdict": "UNKNOWN", "met": [], "missing": [], "missing_evidence": [], "notes": "Audit skipped: no requirements to evaluate — cannot confirm COMPLETE", "audited_at": now_iso()}
+
+        client = Anthropic()
+        req_text = "\n".join(f"- {r}" for r in requirements)
+        files_text = ", ".join(files_changed) if files_changed else "none"
+        evidence_text = "\n".join(
+            f"- [{e.get('evidence_type','?')}] {e.get('check','?')}: {e.get('description','')}"
+            for e in evidence_required
+        ) if evidence_required else "None specified"
+
+        _audit_sess = ""
+        try:
+            _audit_sess = _gss.load_session_context(project_name, limit=4)
+        except Exception:
+            pass
+        _audit_sess_block = (
+            f"\nSESSION CONTEXT (recent Matt corrections/failures — consider when auditing):\n{_audit_sess}\n"
+            if _audit_sess else ""
+        )
+
+        prompt = f"""You are Gerald's Auditor. Check if Claude's output satisfies the Task Contract.
+
+REQUIREMENTS CHECKLIST:
+{req_text}
+
+DEFINITION OF DONE:
+{definition_of_done}
+
+EVIDENCE REQUIRED (checks that demand real captured output — not simulated, hypothetical, or example data):
+{evidence_text}
+
+CLAUDE'S OUTPUT (first 3000 chars):
+{claude_output[:3000]}
+
+FILES CHANGED:
+{files_text}
+{_audit_sess_block}
+EVIDENCE ENFORCEMENT RULES (mandatory):
+1. For every item in EVIDENCE REQUIRED, look for the actual captured output in CLAUDE'S OUTPUT (real command stdout/stderr, real file contents, real HTTP response bodies).
+2. If Claude used simulated output, hypothetical results, placeholder tables, or example data instead of running the actual command/inspection, that evidence item is MISSING — do not accept it.
+3. List every evidence item that is missing or was only simulated in the "missing_evidence" array.
+4. If ANY evidence item is missing, the verdict MUST be FAILED (not PARTIAL).
+5. If some requirements are met but evidence is missing, the verdict is still FAILED.
+
+Return ONLY valid JSON (no markdown):
+{{
+  "verdict": "COMPLETE",
+  "met": ["exact requirement text that was addressed"],
+  "missing": ["exact requirement text that was not addressed"],
+  "missing_evidence": ["description of each evidence item that was absent or simulated"],
+  "notes": "one-line audit summary"
+}}
+
+verdict must be one of: COMPLETE (all requirements met AND all required evidence present), PARTIAL (some requirements met, no missing evidence issues), FAILED (any requirement unmet OR any required evidence missing/simulated)."""
+
+        message = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=512,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        raw = "\n".join(
+            block.text for block in message.content
+            if getattr(block, "type", "") == "text"
+        ).strip()
+        if raw.startswith("```"):
+            raw = re.sub(r"^```[a-z]*\n?", "", raw)
+            raw = re.sub(r"\n?```$", "", raw.rstrip())
+        audit = json.loads(raw)
+        # Post-parse integrity: never emit COMPLETE when evidence is missing or verdict is invalid
+        _parsed_verdict = audit.get("verdict", "")
+        _parsed_missing_evidence = audit.get("missing_evidence", [])
+        if _parsed_verdict not in ("COMPLETE", "PARTIAL", "FAILED"):
+            audit["verdict"] = "FAILED"
+        elif _parsed_missing_evidence:
+            audit["verdict"] = "FAILED"
+        audit["audited_at"] = now_iso()
+        # URO post-parse: user-reported reality overrides a technical COMPLETE
+        if audit.get("verdict") == "COMPLETE":
+            try:
+                from ui_verifier import check_uro_conflict as _check_uro
+                _uro = _check_uro(project_name)
+                if _uro["conflict"]:
+                    _phrases = _uro["evidence"].get("uro_phrases", [])
+                    audit["verdict"] = "FAILED"
+                    audit.setdefault("missing", []).insert(
+                        0, f"User reported unresolved mismatch {_phrases} — COMPLETE blocked"
+                    )
+                    audit["notes"] = f"URO override: {audit.get('notes', 'user reality conflict')}"
+            except Exception as _uro_ex:
+                print(f"[auditor] URO check error: {_uro_ex}")
+        return audit
+    except Exception as e:
+        print(f"[auditor] Audit failed: {e}")
+        return {
+            "verdict": "UNKNOWN",
+            "met": [],
+            "missing": [],
+            "missing_evidence": [],
+            "notes": f"Audit parse/execution failure — cannot confirm COMPLETE: {e}",
+            "audited_at": now_iso(),
+        }
 
 def read_task_state():
     if not os.path.exists(TASK_STATE_FILE):
@@ -771,8 +1430,12 @@ def truthful_status_response(project_name: str = "CommuteCoder"):
         "error": "",
         "timestamp": now_iso()
     }
-    write_outbox(data)
-    write_outbox(data, get_project_outbox_file(project_name))
+    # Write to dedicated status-check file — never overwrite the real task outbox
+    try:
+        with open(STATUS_CHECK_FILE, "w", encoding="utf-8") as _scf:
+            json.dump(data, _scf, indent=2)
+    except Exception:
+        pass
     write_status("idle", "Truthful status check complete")
     return data
 
@@ -910,6 +1573,7 @@ def narrow_investigation_prompt(task_text: str) -> str:
     )
 
 def run_claude_investigation_worker(task_text: str, project_name: str = "CommuteCoder"):
+    _task_id = _generate_task_id()
     project_outbox = get_project_outbox_file(project_name)
 
     worker_dir = get_worker_directory(task_text, project_name)
@@ -964,7 +1628,7 @@ Rules:
     prompt_file = "/tmp/gerald_readonly_investigation_prompt.txt"
     investigation_started_at = time.time()
 
-    write_task_state(task_text, project_name, "investigating", "Claude Code is investigating read-only")
+    write_task_state(task_text, project_name, "investigating", "Claude Code is investigating read-only", task_id=_task_id)
     write_status("investigating", "Claude Code is investigating read-only")
 
     try:
@@ -1012,6 +1676,7 @@ Rules:
         result.stderr = error
 
         data = {
+            "task_id": _task_id,
             "task": task_text,
             "project": project_name,
             "status": "done" if result.returncode == 0 else "error",
@@ -1024,6 +1689,7 @@ Rules:
 
         write_outbox(data)
         write_outbox(data, project_outbox)
+        _append_task_history(data, project_name)
 
         if result.returncode == 0 and looks_like_clarification_request(output):
             write_task_state(
@@ -1082,6 +1748,7 @@ Rules:
         except Exception:
             pass
         data = {
+            "task_id": _task_id,
             "task": task_text,
             "project": project_name,
             "status": "error",
@@ -1092,6 +1759,7 @@ Rules:
         }
         write_outbox(data)
         write_outbox(data, project_outbox)
+        _append_task_history(data, project_name)
         write_task_state(task_text, project_name, "timed_out", err, files_changed=[], output="", error=err)
         write_status("timed_out", err)
 
@@ -1146,14 +1814,20 @@ def run_gerald_brain(task_text: str, project_name: str = "CommuteCoder"):
     print(task_text)
     print("==============================\n")
 
+    _task_id = _generate_task_id()
     outbox_file = get_project_outbox_file(project_name)
-    write_task_state(task_text, project_name, "planning", "Gerald Brain is thinking")
+    write_task_state(task_text, project_name, "planning", "Gerald Brain is thinking", task_id=_task_id)
     write_status("working", "Gerald Brain thinking")
 
     try:
         reply = ask_gerald(task_text)
+        try:
+            _gss.log_event(project_name, "gerald_response", text=reply[:300])
+        except Exception:
+            pass
 
         data = {
+            "task_id": _task_id,
             "task": task_text,
             "project": project_name,
             "status": "done",
@@ -1165,6 +1839,7 @@ def run_gerald_brain(task_text: str, project_name: str = "CommuteCoder"):
         }
 
         write_outbox(data, outbox_file)
+        _append_task_history(data, project_name)
 
         reply_lower = (reply or "").lower()
         if is_planning_only_request(task_text) or any(x in reply_lower for x in [
@@ -1437,10 +2112,12 @@ Return JSON with this schema:
         }
 
 def run_direct_answer(task_text: str, project_name: str, message: str):
+    _task_id = _generate_task_id()
     outbox_file = get_project_outbox_file(project_name)
     try:
         reply = message or ask_gerald(task_text, project_name)
         data = {
+            "task_id": _task_id,
             "task": task_text,
             "project": project_name,
             "status": "done",
@@ -1452,6 +2129,7 @@ def run_direct_answer(task_text: str, project_name: str, message: str):
         }
         write_outbox(data)
         write_outbox(data, outbox_file)
+        _append_task_history(data, project_name)
         if looks_like_clarification_request(reply):
             write_task_state(
                 task_text,
@@ -1532,6 +2210,21 @@ def start(payload: dict, background_tasks: BackgroundTasks):
     raw_project = payload.get("project", "")
     project_name_input = raw_project.strip() if isinstance(raw_project, str) else ""
     project_path, resolved_name = resolve_project(project_name_input)
+
+    # ── Session state: log user request and detect failure feedback ───────────
+    try:
+        _gss.log_event(resolved_name, "user_request", text=text)
+        if _gss.is_failure_feedback(text):
+            _gss.log_event(resolved_name, "matt_correction", text=text)
+            _lf = _gss.get_last_failed_task(resolved_name)
+            if _lf:
+                _gss.log_event(
+                    resolved_name, "task_reopened",
+                    reason=f"Matt reported failure: {text[:100]}",
+                    last_intent=(_lf.get("contract") or {}).get("intent", "")[:100]
+                )
+    except Exception:
+        pass
 
     # ── Reasoning Layer V2: detect manual corrections from Matt ───────────────
     _rl2_alert = gerald_issue_memory.check_correction(text, resolved_name)
@@ -1640,7 +2333,12 @@ def start(payload: dict, background_tasks: BackgroundTasks):
 
 
 @app.get("/read")
-def read():
+def read(project: str = ""):
+    if project:
+        project_outbox = get_project_outbox_file(project)
+        if os.path.exists(project_outbox):
+            with open(project_outbox, "r", encoding="utf-8") as f:
+                return json.loads(f.read())
     if not os.path.exists(OUTBOX_FILE):
         return {"status": "empty"}
     with open(OUTBOX_FILE, "r", encoding="utf-8") as f:
@@ -2165,14 +2863,36 @@ async def gerald_vision_endpoint(
         return {"ok": False, "error": str(e)}
 
 
+# ─── Dashboard Image Upload ────────────────────────────────────────────────────
 
-@app.post("/build-apk")
-def build_apk_endpoint(payload: dict = None):
-    """Build and publish the latest Gerald APK."""
-    payload = payload or {}
-    project = payload.get("project", "CommuteCoder")
+@app.post("/upload-image")
+async def upload_image_endpoint(image: UploadFile = File(...)):
+    """Accept an image from the dashboard, store it, return its URL."""
+    ct = image.content_type or ""
+    if not ct.startswith("image/"):
+        raise HTTPException(status_code=400, detail="Only image files are accepted")
 
-    write_status("executing", "Building Gerald APK")
+    uploads_dir = os.path.join(BASE, "dashboard", "uploads")
+    os.makedirs(uploads_dir, exist_ok=True)
+
+    import uuid as _uuid
+    ext = os.path.splitext(image.filename or "upload")[1] or ".jpg"
+    filename = f"{_uuid.uuid4().hex}{ext}"
+    dest = os.path.join(uploads_dir, filename)
+
+    data = await image.read()
+    with open(dest, "wb") as f:
+        f.write(data)
+
+    image_url = f"/dashboard/uploads/{filename}"
+    print(f"[upload-image] Stored {len(data)} bytes → {dest}")
+    return {"ok": True, "url": image_url, "filename": filename}
+
+
+def _run_apk_build_background(project: str):
+    global _build_running
+    _build_running = True
+    write_status("building", "Building Gerald APK…")
     try:
         result = subprocess.run(
             ["/bin/bash", "/opt/Gerald/build_gerald_apk.sh"],
@@ -2181,10 +2901,8 @@ def build_apk_endpoint(payload: dict = None):
             text=True,
             timeout=1200,
         )
-
         output = result.stdout.strip()
-        error = result.stderr.strip()
-
+        error  = result.stderr.strip()
         write_outbox({
             "task": "Build Gerald APK",
             "project": project,
@@ -2193,30 +2911,42 @@ def build_apk_endpoint(payload: dict = None):
             "output": output,
             "error": error,
             "download_url": "/apk-latest/download",
-            "timestamp": datetime.now(timezone.utc).isoformat()
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         })
-
         if result.returncode == 0:
             write_status("idle", "APK built and published")
-            return {
-                "ok": True,
-                "message": "APK built and published",
-                "download_url": "https://geraldai.com.au/apk-latest/download",
-                "output": output,
-            }
-
-        write_status("error", "APK build failed")
-        return {
-            "ok": False,
-            "message": "APK build failed",
-            "output": output,
-            "error": error,
-        }
-
+        else:
+            write_status("error", "APK build failed")
     except subprocess.TimeoutExpired:
         write_status("error", "APK build timed out")
-        return {"ok": False, "message": "APK build timed out"}
+    finally:
+        _build_running = False
 
+
+@app.post("/build-apk")
+def build_apk_endpoint(payload: dict = None, background_tasks: BackgroundTasks = None):
+    """Trigger APK build asynchronously. Returns immediately; poll /build-status for progress."""
+    if _build_running:
+        return {"ok": False, "error": "Build already in progress"}
+    payload  = payload or {}
+    project  = (payload.get("project") or "CommuteCoder").strip()
+    background_tasks.add_task(_run_apk_build_background, project)
+    return {"ok": True, "message": f"APK build started for {project}"}
+
+
+
+# ── Session state endpoints (read-only) ───────────────────────────────────────
+
+@app.get("/session/summary")
+def session_summary_endpoint(project: str = "CommuteCoder"):
+    """Return current session summary for dashboard display."""
+    return _gss.get_session_summary(project)
+
+
+@app.get("/session/lessons")
+def session_lessons_endpoint(project: str = "CommuteCoder"):
+    """Return per-project lessons memory (read-only)."""
+    return {"project": project, "lessons": _gss._read_lessons(project)}
 
 
 # Private Gerald Dashboard
@@ -2469,9 +3199,48 @@ def task_status():
     return read_task()
 
 
+@app.get("/task/contract")
+def task_contract_endpoint():
+    """Return current task contract and Auditor result from active_task.json."""
+    state = read_task_state()
+    audit = state.get("audit")
+    return {
+        "contract": state.get("contract"),
+        "audit": audit,
+        "audit_verdict": audit.get("verdict") if audit else None,
+        "stage": state.get("stage", "idle"),
+        "task": state.get("task", ""),
+        "project": state.get("project", ""),
+    }
+
+
+@app.get("/task/last-result")
+def get_last_task_result(project: str = "CommuteCoder"):
+    """Return the last real task result (excludes status checks) from durable task history."""
+    result = _get_last_real_task_result(project)
+    if not result:
+        return {"found": False, "project": project}
+    return {**result, "found": True}
+
+
 @app.get("/task/truth")
 def task_truth():
     return {"message": truthful_status()}
+
+
+@app.post("/planner/preview")
+async def planner_preview_endpoint(request: Request):
+    """Generate a Task Contract from a prompt without starting Claude Code. For testing the Planner."""
+    body = await request.json()
+    task_text = body.get("task", "")
+    project = body.get("project", "CommuteCoder")
+    if not task_text:
+        return {"error": "task field required"}
+    try:
+        contract = create_task_contract(task_text, project)
+        return {"ok": True, "contract": contract}
+    except RuntimeError as e:
+        return {"ok": False, "error": str(e)}
 
 @app.post("/task/start")
 def task_start(project: str, user_request: str):
