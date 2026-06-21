@@ -1709,6 +1709,7 @@ Rules:
                 files_changed=[],
                 output=output,
                 error="",
+                task_id=_task_id,
             )
             write_status("needs_clarification", "Claude needs clarification")
         else:
@@ -1895,6 +1896,7 @@ def run_gerald_brain(task_text: str, project_name: str = "CommuteCoder"):
             "timestamp": datetime.now(timezone.utc).isoformat()
         }
         write_outbox(data, outbox_file)
+        write_task_state(task_text, project_name, "error", "Gerald direct answer failed", files_changed=[], output="", error=err, task_id=_task_id)
         write_status("error", err)
         print("❌ GERALD BRAIN ERROR:", err)
 
@@ -2151,7 +2153,7 @@ def run_direct_answer(task_text: str, project_name: str, message: str):
             )
             write_status("needs_clarification", "Gerald needs clarification")
         else:
-            write_task_state(task_text, project_name, "completed", "Gerald answered", files_changed=[], output=reply, error="")
+            write_task_state(task_text, project_name, "completed", "Gerald answered", files_changed=[], output=reply, error="", task_id=_task_id)
             write_status("idle", "Gerald answered")
     except Exception as e:
         err = str(e)
