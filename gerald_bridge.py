@@ -1,4 +1,5 @@
 import os
+from canonical_task_state import read_canonical_state, write_canonical_state, mark_user_disputed
 import re
 import json
 import subprocess
@@ -1015,21 +1016,23 @@ def now_iso():
     return datetime.now(timezone.utc).isoformat()
 
 def write_task_state(task: str, project: str, stage: str, detail: str = "", files_changed=None, output: str = "", error: str = "", contract: dict = None, audit: dict = None, task_id: str = None):
-    # Preserve contract/audit/started/task_id from existing file when not explicitly updated
-    _existing_contract = None
-    _existing_audit = None
-    _existing_started = None
-    _existing_task_id = None
-    if os.path.exists(TASK_STATE_FILE):
-        try:
-            with open(TASK_STATE_FILE, "r", encoding="utf-8") as _f:
-                _existing = json.load(_f)
-                _existing_contract = _existing.get("contract")
-                _existing_audit = _existing.get("audit")
-                _existing_started = _existing.get("started")
-                _existing_task_id = _existing.get("task_id")
-        except Exception:
-            pass
+    """
+    V4 Phase 2 canonical task state writer.
+
+    Canonical state is now the source of truth.
+    active_task.json is still mirrored for backward compatibility.
+    """
+    # Preserve contract/audit/started/task_id from existing active_task.json when not explicitly updated
+    _existing = {}
+    try:
+        if os.path.exists(ACTIVE_TASK):
+            with open(ACTIVE_TASK, "r", encoding="utf-8") as _f:
+                _existing = json.load(_f) or {}
+    except Exception:
+        _existing = {}
+
+    _existing_task_id = _existing.get("task_id")
+    _existing_started = _existing.get("started")
 
     data = {
         "task_id": task_id or _existing_task_id or "",
@@ -1040,26 +1043,32 @@ def write_task_state(task: str, project: str, stage: str, detail: str = "", file
         "files_changed": files_changed or [],
         "output": output,
         "error": error,
-        "updated": now_iso()
+        "updated": datetime.now(timezone.utc).isoformat(),
+        "started": _existing_started or datetime.now(timezone.utc).isoformat(),
+        "contract": contract if contract is not None else _existing.get("contract"),
+        "audit": audit if audit is not None else _existing.get("audit"),
+        "source_of_truth": "canonical",
     }
-    if stage in ["executing", "planning", "verifying"]:
-        data["started"] = _existing_started or now_iso()
-    elif _existing_started:
-        data["started"] = _existing_started
 
-    effective_contract = contract if contract is not None else _existing_contract
-    if effective_contract:
-        data["contract"] = effective_contract
+    # Write canonical first
+    canonical = write_canonical_state(
+        task=task,
+        project=project,
+        stage=stage,
+        detail=detail,
+        files_changed=files_changed or [],
+        output=output,
+        error=error,
+        contract=data.get("contract"),
+        audit=data.get("audit"),
+        task_id=data.get("task_id"),
+    )
 
-    # A new contract means a new task — never carry a stale audit forward
-    effective_audit = audit if audit is not None else (None if contract is not None else _existing_audit)
-    if effective_audit:
-        data["audit"] = effective_audit
+    # Mirror to legacy active_task.json for existing dashboard/app compatibility
+    with open(ACTIVE_TASK, "w", encoding="utf-8") as f:
+        json.dump(canonical, f, indent=2)
 
-    with open(TASK_STATE_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2)
-    return data
-
+    return canonical
 
 def looks_like_clarification_request(output: str) -> bool:
     lower = (output or "").lower()
@@ -2364,12 +2373,31 @@ def ask(payload: dict, background_tasks: BackgroundTasks):
 
 @app.get("/status")
 def get_status():
-    """Return current Gerald status for mobile polling."""
-    if not os.path.exists(STATUS_FILE):
-        return {"status": "idle", "detail": "Gerald ready", "updated": ""}
-    with open(STATUS_FILE, "r", encoding="utf-8") as f:
-        return json.loads(f.read())
+    """
+    V4 Phase 2: /status reads canonical task state.
+    Legacy response shape is preserved where possible.
+    """
+    state = read_canonical_state()
+    stage = state.get("stage", "idle")
 
+    if stage in ("idle", "", None):
+        return {
+            "status": "idle",
+            "detail": "No active task is currently running.",
+            "source_of_truth": "canonical",
+            "task_id": state.get("task_id", ""),
+            "project": state.get("project", ""),
+        }
+
+    return {
+        "status": stage,
+        "detail": state.get("detail", ""),
+        "task_id": state.get("task_id", ""),
+        "task": state.get("task", ""),
+        "project": state.get("project", ""),
+        "updated": state.get("updated", ""),
+        "source_of_truth": "canonical",
+    }
 
 @app.get("/projects")
 def get_projects():
@@ -3196,8 +3224,10 @@ Rules:
 
 @app.get("/task/status")
 def task_status():
-    return read_task()
-
+    """
+    V4 Phase 2: task status reads canonical task state.
+    """
+    return read_canonical_state()
 
 @app.get("/task/contract")
 def task_contract_endpoint():
@@ -3224,9 +3254,9 @@ def get_last_task_result(project: str = "CommuteCoder"):
 
 
 @app.get("/task/truth")
-def task_truth():
-    return {"message": truthful_status()}
-
+def get_task_truth():
+    """V4 Phase 2: canonical task state source of truth."""
+    return read_canonical_state()
 
 @app.post("/planner/preview")
 async def planner_preview_endpoint(request: Request):
