@@ -1,0 +1,188 @@
+"""
+Direct-answer test: proves a task reaches 'completed' state through valid transitions.
+
+Runs in isolation using a temporary canonical state file so it never
+touches the live gerald_canonical_task_state.json.
+"""
+
+import os
+import sys
+import json
+import shutil
+import tempfile
+
+sys.path.insert(0, "/opt/Gerald")
+
+# ── Redirect canonical state to a temp file before importing anything ──────────
+import canonical_task_state as _cts
+_orig_path = _cts.CANONICAL_PATH
+_tmp_dir = tempfile.mkdtemp(prefix="gerald_lc_test_")
+_cts.CANONICAL_PATH = os.path.join(_tmp_dir, "test_canonical.json")
+
+from task_lifecycle import TaskLifecycleController, TransitionError, ALLOWED_TRANSITIONS, LIFECYCLE_STAGES
+from canonical_task_state import write_canonical_state
+
+# ── Helpers ────────────────────────────────────────────────────────────────────
+
+def _reset_to_idle():
+    """Force canonical state to idle without going through the controller."""
+    write_canonical_state(task="", project="CommuteCoder", stage="idle")
+
+def _current_stage() -> str:
+    return _cts.read_canonical_state().get("stage", "idle")
+
+PASS = "✓"
+FAIL = "✗"
+
+# ── Tests ──────────────────────────────────────────────────────────────────────
+
+def test_full_lifecycle():
+    """Walk idle → received → classified → planned → executing → verifying → completed."""
+    _reset_to_idle()
+    lc = TaskLifecycleController()
+
+    steps = [
+        ("received",   "Task received by Gerald"),
+        ("classified", "Message intent classified"),
+        ("planned",    "Task contract generated"),
+        ("executing",  "Claude Code running"),
+        ("verifying",  "Verifying output"),
+        ("completed",  "All requirements met"),
+    ]
+
+    prev = "idle"
+    for to_stage, detail in steps:
+        state = lc.transition(to_stage, task="Test task", project="CommuteCoder", detail=detail)
+        actual = state["stage"]
+        ok = actual == to_stage
+        print(f"  {PASS if ok else FAIL} {prev} → {to_stage}: stage={actual!r}")
+        assert ok, f"Expected {to_stage!r}, got {actual!r}"
+        prev = to_stage
+
+    final = _current_stage()
+    assert final == "completed", f"Final stage should be 'completed', got {final!r}"
+    print(f"\n  ✅ LIFECYCLE COMPLETE — task reached 'completed' via valid transitions")
+    return True
+
+
+def test_invalid_transition_returns_error():
+    """Attempt completed→received: controller must reject it with a clear error."""
+    # State is 'completed' from previous test
+    lc = TaskLifecycleController()
+    assert _current_stage() == "completed", "Pre-condition: state must be 'completed'"
+
+    state, err = lc.try_transition("received", task="New task", project="CommuteCoder")
+    assert state is None, "State should be None on invalid transition"
+    assert err is not None, "Error should not be None"
+    assert "completed" in err and "received" in err, f"Error should name both stages: {err}"
+    print(f"  {PASS} completed → received rejected: {err}")
+    return True
+
+
+def test_any_active_to_failed():
+    """Each active stage must allow a direct jump to 'failed'."""
+    lc = TaskLifecycleController()
+    from canonical_task_state import write_canonical_state as _wcs
+
+    for active_stage in sorted(["received", "classified", "planned", "executing", "verifying"]):
+        _wcs(task="Test", project="CommuteCoder", stage=active_stage)
+        state = lc.transition("failed", detail=f"Error from {active_stage}")
+        assert state["stage"] == "failed", f"Expected 'failed' from {active_stage!r}"
+        print(f"  {PASS} {active_stage} → failed")
+    return True
+
+
+def test_failed_and_completed_to_user_disputed():
+    """Both 'completed' and 'failed' must allow transition to 'user_disputed'."""
+    lc = TaskLifecycleController()
+    from canonical_task_state import write_canonical_state as _wcs
+
+    for terminal in ("completed", "failed"):
+        _wcs(task="Test", project="CommuteCoder", stage=terminal)
+        state = lc.transition("user_disputed", detail="User disputed the result")
+        assert state["stage"] == "user_disputed", f"Expected 'user_disputed' from {terminal!r}"
+        print(f"  {PASS} {terminal} → user_disputed")
+    return True
+
+
+def test_transition_rules_coverage():
+    """Verify ALLOWED_TRANSITIONS encodes all required rules."""
+    required = [
+        ("idle",       "received"),
+        ("received",   "classified"),
+        ("classified", "planned"),
+        ("planned",    "executing"),
+        ("executing",  "verifying"),
+        ("verifying",  "completed"),
+        ("completed",  "user_disputed"),
+        ("failed",     "user_disputed"),
+    ]
+    # Any active → failed
+    active_to_failed = [
+        (s, "failed") for s in ["received", "classified", "planned", "executing", "verifying"]
+    ]
+    for from_s, to_s in required + active_to_failed:
+        ok = to_s in ALLOWED_TRANSITIONS.get(from_s, frozenset())
+        print(f"  {PASS if ok else FAIL} rule {from_s} → {to_s}: {'present' if ok else 'MISSING'}")
+        assert ok, f"Missing required rule: {from_s} → {to_s}"
+    return True
+
+
+def test_executing_heartbeat_allowed():
+    """executing → executing must be allowed (status updates within the executing stage)."""
+    lc = TaskLifecycleController()
+    from canonical_task_state import write_canonical_state as _wcs
+    _wcs(task="Heartbeat test", project="CommuteCoder", stage="executing")
+
+    state = lc.transition("executing", detail="Still running (30s elapsed)")
+    assert state["stage"] == "executing"
+    print(f"  {PASS} executing → executing (heartbeat): stage={state['stage']!r}")
+    return True
+
+
+# ── Runner ─────────────────────────────────────────────────────────────────────
+
+def main():
+    print("=" * 60)
+    print("TaskLifecycleController — Direct-Answer Test Suite")
+    print("=" * 60)
+
+    tests = [
+        ("Full lifecycle: idle → … → completed",           test_full_lifecycle),
+        ("Invalid transition returns clear error",          test_invalid_transition_returns_error),
+        ("Any active stage → failed",                      test_any_active_to_failed),
+        ("completed/failed → user_disputed",               test_failed_and_completed_to_user_disputed),
+        ("All required transition rules present",          test_transition_rules_coverage),
+        ("executing → executing (heartbeat)",              test_executing_heartbeat_allowed),
+    ]
+
+    passed = 0
+    failed = 0
+    for name, fn in tests:
+        print(f"\n[{name}]")
+        try:
+            fn()
+            passed += 1
+        except Exception as e:
+            print(f"  {FAIL} FAILED: {e}")
+            import traceback
+            traceback.print_exc()
+            failed += 1
+
+    print("\n" + "=" * 60)
+    print(f"Results: {passed} passed, {failed} failed")
+    if failed:
+        print("SOME TESTS FAILED")
+        print("=" * 60)
+        sys.exit(1)
+    else:
+        print("ALL TESTS PASSED")
+        print("=" * 60)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    finally:
+        _cts.CANONICAL_PATH = _orig_path
+        shutil.rmtree(_tmp_dir, ignore_errors=True)
