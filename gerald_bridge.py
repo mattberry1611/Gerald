@@ -297,6 +297,61 @@ def save_projects(projects):
 
 
 # Resolves Gerald project paths from the registered project list
+
+def _looks_like_investigation_request(text: str) -> bool:
+    lower = (text or "").lower()
+    phrases = [
+        "why do",
+        "why does",
+        "why did",
+        "why is",
+        "why are",
+        "investigate",
+        "find out why",
+        "look into",
+        "root cause",
+        "what caused",
+        "stuck task",
+        "stuck state",
+    ]
+    return any(x in lower for x in phrases)
+
+
+def _run_command_evidence(label: str, command: list, timeout: int = 20) -> str:
+    import subprocess
+    try:
+        r = subprocess.run(
+            command,
+            cwd="/opt/Gerald",
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+        return (
+            f"\n## {label}\n"
+            f"$ {' '.join(command)}\n"
+            f"EXIT:{r.returncode}\n"
+            f"STDOUT:\n{(r.stdout or '').strip()}\n"
+            f"STDERR:\n{(r.stderr or '').strip()}\n"
+        )
+    except Exception as e:
+        return f"\n## {label}\n$ {' '.join(command)}\nFAILED_TO_RUN:{e}\n"
+
+
+def _build_live_investigation_answer(question: str, project_name: str = "CommuteCoder") -> str:
+    sections = []
+    sections.append("# Live Investigation Result")
+    sections.append(f"Question: {question}")
+    sections.append(_run_command_evidence("Current canonical truth", ["curl", "-s", "http://localhost:8000/task/truth"]))
+    sections.append(_run_command_evidence("Current task status", ["curl", "-s", "http://localhost:8000/task/status"]))
+    sections.append(_run_command_evidence("Last real task result", ["curl", "-s", f"http://localhost:8000/task/last-result?project={project_name}"]))
+    sections.append(_run_command_evidence("Lifecycle rules", ["grep", "-n", "ALLOWED_TRANSITIONS\\|def transition\\|def mark_", "lifecycle_controller.py", "task_lifecycle.py"]))
+    sections.append(_run_command_evidence("Recent Gerald errors", ["bash", "-lc", "journalctl -u gerald -n 120 --no-pager | grep -i 'Traceback\\|ERROR\\|Exception\\|529\\|stuck\\|contract_failed\\|lifecycle' || true"]))
+    sections.append("# Evidence-Based Answer")
+    sections.append("Use the live evidence above. Do not answer from memory or assumptions.")
+    return "\n".join(sections)
+
+
 def resolve_project(project_name: str):
     """Return (path, canonical_name) for a project name."""
     if not project_name:
@@ -2234,6 +2289,38 @@ def run_direct_answer(task_text: str, project_name: str, message: str):
     _task_id = _generate_task_id()
     outbox_file = get_project_outbox_file(project_name)
     try:
+        # V4 Investigation Evidence Gate
+        if _looks_like_investigation_request(task_text):
+            reply = _build_live_investigation_answer(task_text, project_name)
+            data = {
+                "task_id": _task_id,
+                "task": task_text,
+                "project": project_name,
+                "status": "done",
+                "returncode": 0,
+                "output": reply,
+                "summary": reply[:1000],
+                "error": "",
+                "timestamp": datetime.now(timezone.utc).isoformat()
+            }
+            write_outbox(data)
+            write_outbox(data, outbox_file)
+            _append_task_history(data, project_name)
+            write_task_state(
+                task_text,
+                project_name,
+                "completed",
+                "Investigation completed from live evidence",
+                files_changed=[],
+                output=reply,
+                error="",
+                contract={},
+                audit={},
+                task_id=_task_id,
+            )
+            write_status("idle", "Investigation completed")
+            return
+
         reply = message or ask_gerald(task_text, project_name)
         data = {
             "task_id": _task_id,
@@ -2357,6 +2444,21 @@ def start(payload: dict, background_tasks: BackgroundTasks):
     decision_message = (decision.get("message") or "").strip()
 
     print("[Decision Agent]", json.dumps(decision, indent=2))
+
+    # V4 Investigation Evidence Gate: router-level override.
+    # Investigation questions must use live backend evidence, never generic direct answers.
+    if _looks_like_investigation_request(text):
+        background_tasks.add_task(run_direct_answer, text, resolved_name, "")
+        write_status("working", f"Gerald is investigating with live evidence: {resolved_name}")
+        return {
+            "ok": True,
+            "message": "Investigation Evidence Gate: live evidence investigation started.",
+            "decision": {
+                **decision,
+                "action": "evidence_investigation",
+                "reason": "Router override: investigation request requires live evidence."
+            }
+        }
 
     if decision_action == "status_check":
         truthful_status_response(resolved_name)
