@@ -596,6 +596,13 @@ def should_use_backend_root(task_text: str) -> bool:
         "after claude",
         "before marking completed",
         "mark task completed",
+        "create a file",
+        "create file",
+        "called ",
+        "containing exactly",
+        "project root",
+        "no newline",
+        "capture command evidence",
     ]
     flutter_terms = [
         "home screen",
