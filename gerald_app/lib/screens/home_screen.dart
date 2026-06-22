@@ -5,6 +5,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../providers/app_state.dart';
 import '../services/build_verification_service.dart';
 import '../theme.dart';
+import '../widgets/conversation_orb.dart';
 import '../widgets/push_to_talk_button.dart';
 import '../widgets/message_bubble.dart';
 import '../widgets/status_panel.dart';
@@ -132,10 +133,11 @@ class HomeScreen extends StatelessWidget {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Text(
-                        'AI CODING SUPERVISOR',
+                        'YOUR AI COMMAND BRAIN',
+                        overflow: TextOverflow.ellipsis,
                         style: TextStyle(
                           fontSize: 8.5,
-                          letterSpacing: 2.5,
+                          letterSpacing: 2.0,
                           color: kAccentBlue.withOpacity(0.7),
                           fontWeight: FontWeight.w500,
                         ),
@@ -966,78 +968,32 @@ class _EmptyState extends StatelessWidget {
   Widget build(BuildContext context) {
     return Center(
       child: SingleChildScrollView(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Text(
-              'Ready to assist',
-              style: TextStyle(
-                color: kTextPrimary,
-                fontSize: 18,
-                fontWeight: FontWeight.w600,
-                letterSpacing: 0.3,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const ConversationOrb(state: OrbState.idle, size: 160),
+              const SizedBox(height: 28),
+              const Text(
+                'YOUR AI COMMAND BRAIN',
+                style: TextStyle(
+                  color: kAccentBlue,
+                  fontSize: 11,
+                  letterSpacing: 4.0,
+                  fontWeight: FontWeight.w500,
+                ),
               ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Switch between typing and speaking with the toggle below',
-              style: TextStyle(color: kTextSecondary, fontSize: 13),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 32),
-            Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                _Hint(
-                  icon: Icons.touch_app_outlined,
-                  label: 'COMMAND',
-                  sub: 'Hold mic to send',
-                ),
-                Container(
-                  width: 1,
-                  height: 32,
-                  color: kBorderColor,
-                  margin: const EdgeInsets.symmetric(horizontal: 20),
-                ),
-                _Hint(
-                  icon: Icons.record_voice_over_outlined,
-                  label: 'CONVERSE',
-                  sub: 'Auto-listen mode',
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _Hint extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final String sub;
-  const _Hint({required this.icon, required this.label, required this.sub});
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Icon(icon, size: 20, color: kAccentBlue.withOpacity(0.6)),
-        const SizedBox(height: 6),
-        Text(
-          label,
-          style: const TextStyle(
-            color: kTextSecondary,
-            fontSize: 10,
-            fontWeight: FontWeight.w700,
-            letterSpacing: 1.5,
+              const SizedBox(height: 12),
+              Text(
+                'Speak or type to begin',
+                style: TextStyle(color: kTextSecondary, fontSize: 13),
+                textAlign: TextAlign.center,
+              ),
+            ],
           ),
         ),
-        const SizedBox(height: 2),
-        Text(sub, style: TextStyle(color: kTextMuted, fontSize: 11)),
-      ],
+      ),
     );
   }
 }
