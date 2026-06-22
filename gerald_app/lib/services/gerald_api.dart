@@ -221,6 +221,40 @@ class GeraldApi {
 
   String getApkDownloadUrl() => '$baseUrl/apk-latest/download';
 
+  // ── Image Upload ────────────────────────────────────────────────────────────
+
+  /// Upload an image to /upload-image (dashboard-compatible endpoint).
+  /// Returns {"ok": true, "url": "/dashboard/uploads/<file>", ...}
+  Future<Map<String, dynamic>> uploadImage(
+    Uint8List bytes,
+    String mimeType,
+  ) async {
+    final parts = mimeType.split('/');
+    final contentType = MediaType(
+      parts.isNotEmpty ? parts[0] : 'image',
+      parts.length > 1 ? parts[1] : 'jpeg',
+    );
+    final request = http.MultipartRequest(
+      'POST',
+      Uri.parse('$baseUrl/upload-image'),
+    )..files.add(http.MultipartFile.fromBytes(
+        'image',
+        bytes,
+        filename: 'upload.${parts.length > 1 ? parts[1] : "jpg"}',
+        contentType: contentType,
+      ));
+
+    final streamed = await request.send().timeout(const Duration(seconds: 60));
+    final response = await http.Response.fromStream(streamed);
+
+    if (response.statusCode >= 200 && response.statusCode < 300) {
+      final decoded = jsonDecode(response.body);
+      if (decoded is Map<String, dynamic>) return decoded;
+      return {'message': decoded.toString()};
+    }
+    throw Exception('Upload error: ${response.statusCode}');
+  }
+
   // ── Vision ──────────────────────────────────────────────────────────────────
 
   Future<Map<String, dynamic>> uploadVisionImage(

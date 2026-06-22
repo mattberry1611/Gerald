@@ -61,6 +61,9 @@ class AppState extends ChangeNotifier {
 
   final List<String> _commandQueue = [];
 
+  // ── Pending image upload (stored URL appended to next /start send) ──────────
+  String? _pendingImageUrl;
+
   // ── Project Brain ──────────────────────────────────────────────────────────
   ProjectBrain? _projectBrain;
   bool _brainLoading = false;
@@ -102,6 +105,9 @@ class AppState extends ChangeNotifier {
 
   /// Full project metadata (name, path, description).
   List<Map<String, dynamic>> get projectsFull => List.unmodifiable(_projectsFull);
+
+  String? get pendingImageUrl => _pendingImageUrl;
+  bool get hasPendingImage => _pendingImageUrl != null;
 
   // Project Brain
   ProjectBrain? get projectBrain => _projectBrain;
@@ -471,7 +477,14 @@ class AppState extends ChangeNotifier {
     _log('Sent: ${_shortLabel(prompt)}');
     notifyListeners();
 
-    final enrichedPrompt = _buildContextualPrompt(prompt);
+    String enrichedPrompt = _buildContextualPrompt(prompt);
+
+    // Append pending image URL if one was uploaded before this send
+    if (_pendingImageUrl != null) {
+      enrichedPrompt =
+          '$enrichedPrompt\nUploaded image available at: $_pendingImageUrl\nUse this image as visual reference for the task.';
+      _pendingImageUrl = null;
+    }
 
     try {
       final result = await _api.sendPrompt(enrichedPrompt, project: _selectedProject);
@@ -524,21 +537,27 @@ class AppState extends ChangeNotifier {
   }) async {
     _addMessage(
       'user',
-      caption.isNotEmpty ? caption : '[Image]',
+      caption.isNotEmpty ? caption : '[Image attached]',
       imagePath: imagePath,
     );
-    _log('Image attached: ${imagePath.split(RegExp(r'[/\\]')).last}');
+    _log('Uploading image: ${imagePath.split(RegExp(r'[/\\]')).last}');
+    notifyListeners();
 
     try {
-      final result = await _api.uploadVisionImage(bytes, mimeType, prompt: caption);
-      final reply = (result['message'] ?? result['reply'] ?? result['output'] ?? '').toString().trim();
-      if (reply.isNotEmpty) {
-        _addMessage('gerald', reply);
-        if (_ttsEnabled) TtsService.instance.speak(reply).ignore();
+      final result = await _api.uploadImage(bytes, mimeType);
+      final url = result['url'] as String?;
+      if (url != null && url.isNotEmpty) {
+        _pendingImageUrl = url;
+        _addMessage('gerald',
+            'Image uploaded. It will be included as a visual reference when you send your next message.');
+        _log('Image upload succeeded — URL stored');
+      } else {
+        _addMessage('gerald', 'Image upload failed: no URL returned.');
+        _log('Image upload failed: no URL in response');
       }
     } catch (e) {
-      _addMessage('gerald', 'Vision error: $e');
-      _log('Vision error: $e');
+      _addMessage('gerald', 'Image upload failed: $e');
+      _log('Image upload error: $e');
     }
   }
 
