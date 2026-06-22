@@ -1,5 +1,8 @@
 import os
 from canonical_task_state import read_canonical_state, write_canonical_state, mark_user_disputed
+from task_lifecycle import TaskLifecycleController, TransitionError, LIFECYCLE_STAGES
+
+_lifecycle = TaskLifecycleController()
 import re
 import json
 import subprocess
@@ -1053,8 +1056,8 @@ def write_task_state(task: str, project: str, stage: str, detail: str = "", file
         "source_of_truth": "canonical",
     }
 
-    # Write canonical first
-    canonical = write_canonical_state(
+    # Write canonical — route through lifecycle controller for lifecycle stages
+    _wkw = dict(
         task=task,
         project=project,
         stage=stage,
@@ -1066,6 +1069,25 @@ def write_task_state(task: str, project: str, stage: str, detail: str = "", file
         audit=data.get("audit"),
         task_id=data.get("task_id"),
     )
+    if stage in LIFECYCLE_STAGES:
+        try:
+            canonical = _lifecycle.transition(
+                stage,
+                task=task,
+                project=project,
+                detail=detail,
+                files_changed=files_changed or [],
+                output=output,
+                error=error,
+                contract=data.get("contract"),
+                audit=data.get("audit"),
+                task_id=data.get("task_id"),
+            )
+        except TransitionError as _te:
+            print(f"[lifecycle] WARN invalid transition to {stage!r}: {_te} — writing directly")
+            canonical = write_canonical_state(**_wkw)
+    else:
+        canonical = write_canonical_state(**_wkw)
 
     # Mirror to legacy active_task.json for existing dashboard/app compatibility
     with open(ACTIVE_TASK, "w", encoding="utf-8") as f:
