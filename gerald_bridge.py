@@ -245,8 +245,16 @@ def _get_last_real_task_result(project_name: str) -> dict:
 
         for record in reversed(history):
             task_text = record.get("task", "")
+            output_text = record.get("output", "") or ""
+            summary_text = record.get("summary", "") or ""
 
-            if _is_status_check_task(task_text):
+            is_live_investigation = (
+                "# Live Investigation Result" in output_text
+                or "Investigation completed from live evidence" in output_text
+                or "Investigation completed from live evidence" in summary_text
+            )
+
+            if _is_status_check_task(task_text) and not is_live_investigation:
                 continue
 
             if _is_command_task(task_text):
@@ -258,7 +266,7 @@ def _get_last_real_task_result(project_name: str) -> dict:
             if not _has_useful_output(record):
                 continue
 
-            if _reports_last_result(record.get("output", ""), record.get("summary", "")):
+            if _reports_last_result(record.get("output", ""), record.get("summary", "")) and not is_live_investigation:
                 continue
 
             return record
@@ -2448,11 +2456,28 @@ def start(payload: dict, background_tasks: BackgroundTasks):
     # V4 Investigation Evidence Gate: router-level override.
     # Investigation questions must use live backend evidence, never generic direct answers.
     if _looks_like_investigation_request(text):
-        background_tasks.add_task(run_direct_answer, text, resolved_name, "")
-        write_status("working", f"Gerald is investigating with live evidence: {resolved_name}")
+        _task_id = _generate_task_id()
+        reply = _build_live_investigation_answer(text, resolved_name)
+        data = {
+            "task_id": _task_id,
+            "task": text,
+            "project": resolved_name,
+            "status": "done",
+            "returncode": 0,
+            "output": reply,
+            "summary": reply[:1000],
+            "error": "",
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        }
+        outbox_file = get_project_outbox_file(resolved_name)
+        write_outbox(data)
+        write_outbox(data, outbox_file)
+        _append_task_history(data, resolved_name)
+        write_task_state(text, resolved_name, "completed", "Investigation completed from live evidence", files_changed=[], output=reply, error="", contract={}, audit={}, task_id=_task_id)
+        write_status("idle", "Investigation completed")
         return {
             "ok": True,
-            "message": "Investigation Evidence Gate: live evidence investigation started.",
+            "message": "Investigation Evidence Gate: live evidence investigation completed.",
             "decision": {
                 **decision,
                 "action": "evidence_investigation",
