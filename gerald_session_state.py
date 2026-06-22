@@ -262,6 +262,16 @@ def log_event(project: str, event_type: str, **kwargs):
         events = events[-100:]
         _write_log(project, events)
 
+        # Task-local file baseline: snapshot dirty files at the moment Matt's
+        # request is logged — before the background worker starts.  The review
+        # layer subtracts this baseline so only task-local file changes are evaluated.
+        if event_type == "user_request":
+            try:
+                from gerald_request_review import snapshot_pre_task_files
+                snapshot_pre_task_files()
+            except Exception as _snap_err:
+                print(f"[session_state] task_baseline_snapshot error: {_snap_err}")
+
         # User Reality Override hook: when the bridge logs a matt_correction,
         # check for user-reality phrases and emit user_reality_conflict + flag task.
         # Runs AFTER the event is persisted so evidence is captured in order.

@@ -80,6 +80,34 @@ def _is_forbidden_file(filepath: str, forbidden_patterns: list) -> bool:
     return False
 
 
+def _is_in_contract_scope(filepath: str, allowed_paths) -> bool:
+    """Return True if filepath is covered by any entry in the contract's likely_files."""
+    for allowed in (allowed_paths or []):
+        allowed = (allowed or "").strip()
+        if not allowed:
+            continue
+        if filepath == allowed:
+            return True
+        # Suffix match: planner may list "app.js" when the real path is "dashboard/app.js"
+        if filepath.endswith("/" + allowed):
+            return True
+        # Directory prefix: "dashboard" covers "dashboard/index.html"
+        if filepath.startswith(allowed.rstrip("/") + "/"):
+            return True
+    return False
+
+
+def _is_runtime_artifact(filepath: str) -> bool:
+    """Return True for runtime state files that must never trigger scope violations."""
+    import os
+    base = os.path.basename(filepath)
+    if base == "active_task.json":
+        return True
+    if base.startswith("gerald_outbox_") and base.endswith(".json"):
+        return True
+    return False
+
+
 # ── Guard 1: UNKNOWN verdict → FAILED ─────────────────────────────────────────
 
 def handle_audit_unknown_verdict(project: str) -> bool:
@@ -163,62 +191,99 @@ def handle_review_fail_enforcement(project: str) -> bool:
     return True
 
 
-# ── Guard 3: forbidden/out-of-scope files → PARTIAL or FAILED ─────────────────
+# ── Guard 3: out-of-scope file changes → PARTIAL or FAILED ────────────────────
 
 def handle_scope_check(project: str) -> bool:
     """
-    If files_changed includes paths matching contract.forbidden_files, downgrade
-    the task verdict: PARTIAL when some changed files were allowed, FAILED when
-    ALL changed files were forbidden (nothing legitimate was accomplished).
+    Validates files_changed against the task contract's allowed scope:
 
-    Runs after review FAIL enforcement so it may augment an already-downgraded
-    verdict. Returns True if a correction was applied.
+    - forbidden_files (hard block): any match → PARTIAL/FAILED verdict.
+    - likely_files (soft scope): files outside likely_files that are also
+      not runtime artifacts are flagged as scope violations with root-cause
+      detail; verdict is PARTIAL unless ALL changed files are violations.
+
+    Scope and allowed paths are sourced entirely from the task contract —
+    no hardcoded project-directory assumptions. Returns True if a correction
+    was applied.
     """
     state = _read_task()
     contract = state.get("contract") or {}
     forbidden_patterns = contract.get("forbidden_files", [])
-
-    if not forbidden_patterns:
-        return False
+    likely_files = contract.get("likely_files", [])
 
     files_changed = state.get("files_changed", [])
     if not files_changed:
         return False
 
+    # Check 1: explicitly forbidden files (hard block)
     forbidden_changed = [
         f for f in files_changed
         if _is_forbidden_file(f, forbidden_patterns)
-    ]
-    if not forbidden_changed:
+    ] if forbidden_patterns else []
+
+    # Check 2: files outside contract's likely_files scope
+    scope_violated = []
+    if likely_files:
+        scope_violated = [
+            f for f in files_changed
+            if not _is_runtime_artifact(f)
+            and not _is_in_contract_scope(f, likely_files)
+            and f not in forbidden_changed
+        ]
+
+    if not forbidden_changed and not scope_violated:
         return False
 
     now = _now()
     audit = state.get("audit") or {}
-
-    allowed_changed = [f for f in files_changed if f not in forbidden_changed]
-    new_verdict = "FAILED" if not allowed_changed else "PARTIAL"
-    forbidden_text = ", ".join(forbidden_changed[:5])
-    if len(forbidden_changed) > 5:
-        forbidden_text += f" (+{len(forbidden_changed) - 5} more)"
-
     missing = audit.setdefault("missing", [])
-    scope_note = f"Out-of-scope files changed ({len(forbidden_changed)}): {forbidden_text}"
-    if scope_note not in missing:
-        missing.insert(0, scope_note)
+    notes_parts = []
+
+    # Determine allowed_changed for verdict (files that are in scope)
+    all_violations = forbidden_changed + scope_violated
+    allowed_changed = [f for f in files_changed if f not in all_violations]
+    new_verdict = "FAILED" if not allowed_changed else "PARTIAL"
+
+    if forbidden_changed:
+        forbidden_text = ", ".join(forbidden_changed[:5])
+        if len(forbidden_changed) > 5:
+            forbidden_text += f" (+{len(forbidden_changed) - 5} more)"
+        scope_note = f"Forbidden files changed ({len(forbidden_changed)}): {forbidden_text}"
+        if scope_note not in missing:
+            missing.insert(0, scope_note)
+        notes_parts.append(f"{len(forbidden_changed)} forbidden file(s): {forbidden_text[:80]}")
+
+    if scope_violated:
+        violated_text = ", ".join(scope_violated[:5])
+        if len(scope_violated) > 5:
+            violated_text += f" (+{len(scope_violated) - 5} more)"
+        expected_text = ", ".join(likely_files[:5])
+        scope_note = (
+            f"Out-of-contract files changed ({len(scope_violated)}): {violated_text}. "
+            f"Contract allowed paths: {expected_text}"
+        )
+        if scope_note not in missing:
+            missing.insert(len(forbidden_changed), scope_note)
+        notes_parts.append(
+            f"Root cause: {len(scope_violated)} file(s) not in contract scope "
+            f"({violated_text[:60]}); contract allows: {expected_text[:60]}"
+        )
+
     audit["verdict"] = new_verdict
-    audit["notes"] = (
-        f"Scope violation: {len(forbidden_changed)} forbidden file(s) modified — {forbidden_text[:100]}"
-    )
+    audit["notes"] = "Scope violation: " + "; ".join(notes_parts)
     state["audit"] = audit
     new_stage = "contract_failed" if new_verdict == "FAILED" else "partial"
     state["stage"] = new_stage
-    state["detail"] = f"Scope check: {len(forbidden_changed)} forbidden file(s): {forbidden_text[:100]}"
+    violation_text = ", ".join(all_violations[:5])
+    if len(all_violations) > 5:
+        violation_text += f" (+{len(all_violations) - 5} more)"
+    state["detail"] = f"Scope check: {len(all_violations)} file(s) out of contract scope: {violation_text[:100]}"
     state["updated"] = now
 
     _write_task(state)
     _write_status(
         "error" if new_verdict == "FAILED" else "idle",
-        f"Scope violation: {forbidden_text[:80]}",
+        f"Scope violation: {violation_text[:80]}",
     )
     _patch_outbox(project, {
         "status": new_stage,
@@ -227,6 +292,6 @@ def handle_scope_check(project: str) -> bool:
     })
     print(
         f"[auditor_integrity] SCOPE CHECK: {new_verdict} — "
-        f"{len(forbidden_changed)} forbidden file(s): {forbidden_text[:60]}"
+        f"{len(all_violations)} violation(s): {violation_text[:60]}"
     )
     return True

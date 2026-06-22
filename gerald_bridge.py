@@ -325,6 +325,32 @@ def _looks_like_investigation_request(text: str) -> bool:
     return any(x in lower for x in phrases)
 
 
+
+def _looks_like_implementation_request(text: str) -> bool:
+    """Return True when Matt is asking for a real code/file change.
+
+    This prevents the Investigation Evidence Gate from hijacking requests like:
+    "investigate and fix", "CODE CHANGE REQUIRED", or "return code changes".
+    """
+    lower = (text or "").lower()
+    phrases = [
+        "code change required",
+        "backend code change",
+        "source code modification",
+        "route to claude code",
+        "modify ",
+        "implement ",
+        "fix ",
+        "patch ",
+        "change ",
+        "update ",
+        "return code changes",
+        "return exact files changed",
+        "files changed",
+    ]
+    return any(x in lower for x in phrases)
+
+
 def _run_command_evidence(label: str, command: list, timeout: int = 20) -> str:
     import subprocess
     try:
@@ -740,6 +766,8 @@ Rules:
     safe_prompt = inject_brain_context(safe_prompt, _proj_path, project_name)
     print(f"[brain] inject_brain_context (worker): {len(safe_prompt)} chars, project={project_name}, path={_proj_path}")
 
+    mark_fresh_task(task_text, project_name)
+
     # ── Planner: Generate Task Contract before Claude runs ────────────────
     print("[planner] Generating task contract…")
     try:
@@ -884,6 +912,7 @@ Rules:
                 files_changed=changed_files,
                 returncode=result.returncode,
                 error=error,
+                contract=_contract,
             )
             # ── Auditor: always the sole source of truth for task completion ──
             try:
@@ -1551,9 +1580,13 @@ def read_task_state():
         }
 
 def get_changed_files_under_lib(project_path="/opt/Gerald/gerald_app"):
+    # Flutter projects (gerald_app) scope to lib/ only; other projects report all changed files.
+    abs_path = os.path.abspath(project_path)
+    is_flutter_app = abs_path == os.path.abspath("/opt/Gerald/gerald_app")
+    cmd = ["git", "diff", "--name-only"] + (["--", "lib"] if is_flutter_app else [])
     try:
         result = subprocess.run(
-            ["git", "diff", "--name-only", "--", "lib"],
+            cmd,
             cwd=project_path,
             capture_output=True,
             text=True,
@@ -2329,7 +2362,7 @@ def run_direct_answer(task_text: str, project_name: str, message: str):
     outbox_file = get_project_outbox_file(project_name)
     try:
         # V4 Investigation Evidence Gate
-        if _looks_like_investigation_request(task_text):
+        if _looks_like_investigation_request(task_text) and not _looks_like_implementation_request(task_text):
             reply = _build_live_investigation_answer(task_text, project_name)
             data = {
                 "task_id": _task_id,
@@ -2490,9 +2523,20 @@ def start(payload: dict, background_tasks: BackgroundTasks):
 
     print("[Decision Agent]", json.dumps(decision, indent=2))
 
+    # ── Implementation keyword override ────────────────────────────────────────
+    # If the message contains explicit implementation signals ('CODE CHANGE REQUIRED',
+    # 'Modify', 'Implement', 'Fix', 'Return code changes') the Decision Agent must
+    # not route to investigation, brain, or direct-answer.  Override to claude_code
+    # so the task is always executed and completion notifications fire correctly.
+    _NON_EXEC_ACTIONS = {"answer_directly", "gerald_brain", "readonly_investigation", "fallback_router"}
+    if _looks_like_implementation_request(text) and decision_action in _NON_EXEC_ACTIONS:
+        print(f"[router] Implementation override: '{decision_action}' → 'claude_code' (keyword match in task)")
+        decision_action = "claude_code"
+        decision_task = text  # use original user text verbatim
+
     # V4 Investigation Evidence Gate: router-level override.
     # Investigation questions must use live backend evidence, never generic direct answers.
-    if _looks_like_investigation_request(text):
+    if _looks_like_investigation_request(text) and not _looks_like_implementation_request(text):
         _task_id = _generate_task_id()
         reply = _build_live_investigation_answer(text, resolved_name)
         data = {

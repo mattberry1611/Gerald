@@ -1,7 +1,10 @@
+import hashlib
+import json as _json
 import os
 import subprocess
 import threading
 from dataclasses import dataclass
+from pathlib import Path as _Path
 from typing import List, Optional
 
 # Provider/session/rate-limit error signals — mirrors gerald_openai_brain._CLAUDE_PROVIDER_ERROR_SIGNALS
@@ -233,6 +236,87 @@ _FLUTTER_ALLOW_PHRASES = [
 ]
 
 
+# File that stores the pre-task dirty-file snapshot for task-local change tracking.
+_TASK_BASELINE_FILE = _Path("/opt/Gerald/gerald_task_baseline.json")
+
+
+def _sha256_file(filepath: str, git_root: str = _GIT_ROOT) -> Optional[str]:
+    """Return SHA256 hex digest of a file, or None if unreadable."""
+    abs_path = os.path.join(git_root, filepath)
+    try:
+        with open(abs_path, "rb") as fh:
+            return hashlib.sha256(fh.read()).hexdigest()
+    except Exception:
+        return None
+
+
+def _compute_dirty_hashes(git_root: str) -> dict:
+    """Return {filepath: sha256} for all currently-dirty files."""
+    return {f: _sha256_file(f, git_root) for f in _git_changed_files(git_root)}
+
+
+def snapshot_pre_task_files(git_root: str = _GIT_ROOT) -> dict:
+    """Capture SHA256 hashes of all currently-dirty files before a task runs.
+
+    Persists to _TASK_BASELINE_FILE. review_task_result() compares post-task
+    hashes against this baseline so a file that was already dirty is still
+    flagged as 'changed during the task' when its content actually changed.
+    """
+    hashes = _compute_dirty_hashes(git_root)
+    try:
+        _TASK_BASELINE_FILE.write_text(
+            _json.dumps({"hashes": hashes, "git_root": git_root}),
+            encoding="utf-8",
+        )
+    except Exception as e:
+        print(f"[review] snapshot_pre_task_files error: {e}")
+    return hashes
+
+
+def _load_task_baseline() -> dict:
+    """Load the pre-task hash snapshot. Returns empty dict if no baseline exists."""
+    try:
+        data = _json.loads(_TASK_BASELINE_FILE.read_text(encoding="utf-8"))
+        if "hashes" in data:
+            return data["hashes"]
+        # Legacy format (list of filenames) — return empty to force full diff
+        return {}
+    except Exception:
+        return {}
+
+
+def _get_task_local_changes(git_root: str, baseline_hashes: dict) -> list:
+    """Return files whose content changed during the current task.
+
+    A file is included if it is currently dirty AND either:
+      - it was not in the baseline (newly modified), or
+      - its SHA256 hash differs from the baseline value (content changed).
+
+    Files that were dirty before the task but whose hash is unchanged are
+    excluded — they were already dirty and were not touched by this task.
+    """
+    current_hashes = _compute_dirty_hashes(git_root)
+    changed = []
+    for filepath, current_sha in current_hashes.items():
+        if filepath not in baseline_hashes:
+            changed.append(filepath)
+        elif current_sha != baseline_hashes[filepath]:
+            changed.append(filepath)
+    return sorted(changed)
+
+
+def _git_diff_file(git_root: str, filepath: str) -> str:
+    """Return the unified diff for a single file."""
+    try:
+        r = subprocess.run(
+            ["git", "diff", "--", filepath],
+            cwd=git_root, capture_output=True, text=True, timeout=15,
+        )
+        return r.stdout.strip()
+    except Exception:
+        return ""
+
+
 def _is_backend_only_task(task_text: str, worker_dir: str) -> bool:
     """Return True when the task is scoped to the backend root (no Flutter edits expected)."""
     if "backend-only" in (task_text or "").lower():
@@ -283,6 +367,23 @@ def _is_runtime_artifact(filename: str) -> bool:
     return False
 
 
+def _is_in_contract_scope(filepath: str, allowed_paths) -> bool:
+    """Return True if filepath is covered by any entry in the contract's likely_files."""
+    for allowed in (allowed_paths or []):
+        allowed = (allowed or "").strip()
+        if not allowed:
+            continue
+        if filepath == allowed:
+            return True
+        # Suffix match: planner may list "app.js" when the real path is "dashboard/app.js"
+        if filepath.endswith("/" + allowed):
+            return True
+        # Directory prefix: "dashboard" covers "dashboard/index.html"
+        if filepath.startswith(allowed.rstrip("/") + "/"):
+            return True
+    return False
+
+
 def _scope_prefix(worker_dir: str) -> Optional[str]:
     """Return the git-root-relative prefix expected for worker_dir, or None for root."""
     abs_worker = os.path.abspath(worker_dir)
@@ -305,6 +406,7 @@ def review_task_result(
     returncode: int,
     error: str = "",
     edit_summary: Optional[dict] = None,
+    contract: Optional[dict] = None,
 ) -> dict:
     """
     Review Agent V1: validate a completed Claude Code implementation task.
@@ -313,7 +415,9 @@ def review_task_result(
       1. Non-zero exit code → FAIL
       2. Provider / API rate-limit error in output or stderr → FAIL
       3. No files changed (neither diff-tracker nor git agree anything changed) → FAIL
-      4. Files changed outside the expected worker_dir scope → FAIL
+      4. Files changed outside the expected scope → FAIL
+         Scope is sourced from the task contract's likely_files first;
+         worker_dir-based prefix is used only when no contract is provided.
       5. Claude produced no meaningful output (silent failure) → FAIL
 
     Returns:
@@ -355,7 +459,10 @@ def review_task_result(
 
     git_root = _GIT_ROOT
     git_stat = _git_diff_stat(git_root)
-    git_changed = _git_changed_files(git_root)
+    # Task-local: use SHA256 hashes to detect content changes even for files
+    # that were already dirty before the task started.
+    _baseline_hashes = _load_task_baseline()
+    git_changed = _get_task_local_changes(git_root, _baseline_hashes)
 
     any_lib_changes = bool(files_changed)
     any_git_changes = bool(git_changed)
@@ -363,17 +470,28 @@ def review_task_result(
     if not diff_tracker_found_changes and not any_lib_changes and not any_git_changes:
         reasons.append("No files were changed — Claude appears to have made no edits.")
 
-    # 4. Files changed outside expected worker_dir scope
+    # 4. Files changed outside expected scope
+    # Allowed scope is sourced from the task contract's likely_files.
+    # Worker-dir prefix (e.g. "gerald_app/") is used as a fallback when no contract is present.
     scope_prefix = _scope_prefix(worker_dir)
+    contract_likely = (contract or {}).get("likely_files", [])
     if scope_prefix is not None:
-        # Only check when worker_dir is a subdirectory (Flutter tasks)
+        # Only check when worker_dir is a subdirectory (non-backend tasks)
         for f in git_changed:
             if _is_runtime_artifact(f):
                 continue
-            if not f.startswith(scope_prefix):
-                reasons.append(
-                    f"File changed outside expected scope ({scope_prefix.rstrip('/')}): {f}"
-                )
+            if f.startswith(scope_prefix):
+                continue
+            # File is outside worker_dir prefix — check if the contract explicitly allows it
+            if _is_in_contract_scope(f, contract_likely):
+                continue
+            allowed_desc = (
+                f"contract allows: {contract_likely}" if contract_likely
+                else f"worker: {scope_prefix.rstrip('/')}"
+            )
+            reasons.append(
+                f"File changed outside expected scope ({allowed_desc}): {f}"
+            )
 
     # 4b. Backend-only task must not touch Flutter (gerald_app/) files
     if _is_backend_only_task(task_text, worker_dir) and not _flutter_changes_explicitly_allowed(task_text):
@@ -391,9 +509,12 @@ def review_task_result(
 
     verdict = "FAIL" if reasons else "PASS"
 
+    # Collect per-file unified diffs for all task-local changes.
+    file_diffs = {f: _git_diff_file(git_root, f) for f in git_changed}
+
     print(
         f"[review-agent-v1] verdict={verdict} project={project_name} "
-        f"worker={worker_dir} reasons={reasons}"
+        f"worker={worker_dir} reasons={reasons} changed={git_changed}"
     )
 
     return {
@@ -401,6 +522,7 @@ def review_task_result(
         "reasons": reasons,
         "git_stat": git_stat,
         "git_changed_files": git_changed,
+        "file_diffs": file_diffs,
     }
 
 

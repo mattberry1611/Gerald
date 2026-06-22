@@ -258,6 +258,17 @@ _INVESTIGATION_SIGNALS = [
     "root cause", "investigate only", "report back",
 ]
 
+# If ANY of these are present the task is an implementation request.
+# They take priority over investigation signals — classify as new_task_request.
+_IMPLEMENTATION_SIGNALS = [
+    "code change required",
+    "backend code change",
+    "modify ",
+    "implement ",
+    "fix ",
+    "return code changes",
+]
+
 _VISUAL_SIGNALS = [
     "look", "appear", "visible", "showing", "display", "screen",
     "can you see", "can i see", "see it", "does it show", "screenshot",
@@ -310,6 +321,9 @@ def classify_message_intent(prompt: str) -> str:
         return "user_feedback_or_disagreement"
     if any(s in p for s in _AUDIT_SIGNALS):
         return "implementation_audit"
+    # Implementation intent overrides investigation: "investigate AND fix" is still a code task.
+    if any(s in p for s in _IMPLEMENTATION_SIGNALS):
+        return "new_task_request"
     if any(s in p for s in _INVESTIGATION_SIGNALS):
         return "investigation_request"
     if any(s in p for s in _VISUAL_SIGNALS):
@@ -802,6 +816,7 @@ Available actions:
 - fallback_router: only if the supervisor cannot decide safely.
 
 Rules:
+- IMPLEMENTATION OVERRIDE (highest priority): If the message contains ANY of these keywords — "CODE CHANGE REQUIRED", "modify ", "implement ", "fix ", "backend code change", "return code changes" — ALWAYS choose claude_code. NEVER choose readonly_investigation. This overrides all other rules including investigation_request classification. Presence of words like investigate/find/root cause does NOT change this — implementation keywords win.
 - OpenAI/Gerald is the supervisor and conversation brain.
 - Claude should only receive small, specific worker tasks.
 - Prefer concise, practical responses.
@@ -813,7 +828,7 @@ Rules:
 - If MESSAGE CLASS is implementation_audit: choose readonly_investigation; task must include explicit ls/grep/sed commands for each item; require all four proofs (file existence, function grep, import wiring, execution path); return UNKNOWN for any item that cannot be live-inspected. NEVER answer from memory.
 - If MESSAGE CLASS is visual_outcome_question: choose answer_directly and base response on evidence, NOT task pipeline status.
 - If MESSAGE CLASS is user_feedback_or_disagreement: do not repeat; acknowledge mismatch; report root cause.
-- If MESSAGE CLASS is investigation_request: choose readonly_investigation or answer_directly with root cause.
+- If MESSAGE CLASS is investigation_request AND no implementation keywords present: choose readonly_investigation or answer_directly with root cause.
 - Return ONLY valid JSON.
 
 SUPERVISOR BRAIN:
