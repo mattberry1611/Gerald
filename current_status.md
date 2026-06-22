@@ -1,8 +1,8 @@
 
 # CommuteCoder — Current Status
 
-**Last Updated:** 2026-06-21
-**Version:** V3.4.2 — Successful-only filter for /task/last-result
+**Last Updated:** 2026-06-22
+**Version:** V3.4.3 — Auditor parse failure no longer marks contract_failed
 
 ## What's Working
 
@@ -87,6 +87,7 @@ Remote phone-to-cloud file edits are now proven.
 - None known
 
 ## Recent Changes
+- **V3.4.3**: Auditor parse failure fix — `gerald_bridge.py` `audit_task_contract()`: (1) `max_tokens` raised 512→1024 (primary fix — 512 tokens was too small for full JSON response, causing "Unterminated string" truncation); (2) added `json.JSONDecodeError` inner catch that tries regex recovery (`"verdict"\s*:\s*"(COMPLETE|PARTIAL|FAILED)"`) from the truncated raw output before re-raising; (3) outer exception handler changed from `verdict: "UNKNOWN"` to `verdict: "PARTIAL"` — UNKNOWN was being escalated to FAILED by `auditor_integrity.handle_audit_unknown_verdict()`, marking good tasks as `contract_failed`; PARTIAL preserves the successful Claude output. No app/dashboard/session-state changes. Server restart required.
 - **V3.4.2**: Successful-only filter for `/task/last-result` — `gerald_bridge.py`: `_get_last_real_task_result()` now applies four additional skip conditions on top of the existing status-check filter: skips records with `status="error"`, skips `status="contract_failed"`, skips `returncode != 0`, skips records where both `output` and `summary` are empty. Only the first record passing all five checks is returned. No app/dashboard UI changes. Server restart required to activate.
 - **V3.4.1**: Status phrase filter for `/task/last-result` — `gerald_bridge.py`: added `_STATUS_CHECK_PHRASES` list (7 phrases: "is the last task complete", "is it complete", "status check", "what is the status", "is claude still running", "are you done", "did it finish") and `_is_status_check_task()` helper; `_get_last_real_task_result()` now iterates history in reverse and skips any record where the `task` field contains a phrase (case-insensitive, inclusive substring match), returning the first non-matching entry. Verified by simulation: after appending "Say the word kernel-test only." followed by "is the last task complete?", the function correctly returns the kernel-test result. No app/dashboard UI changes. Server restart required to activate.
 - **V3.3.0**: Auditor Integrity V2 — new `auditor_integrity.py` module with three post-outcome enforcement guards wired into `gerald_session_state.log_event()`: (1) `handle_audit_unknown_verdict()` fires on every outcome event — upgrades `audit.verdict=UNKNOWN` (from JSON parse failures) to `FAILED` in active_task.json and outbox; (2) `handle_review_fail_enforcement()` fires on completed outcomes — if `review_verdict=FAIL` AND `audit.verdict=COMPLETE`, downgrades to PARTIAL (review concern preserved; audit partial credit granted); (3) `handle_scope_check()` fires on completed outcomes — checks `files_changed` against `contract.forbidden_files`; PARTIAL if some allowed files changed, FAILED if all changed files were forbidden; all three patch active_task.json + outbox + gerald_status.json. Root cause of previous regression: server was running pre-V2.5 code (old exception handler returned `verdict=COMPLETE` on JSON parse error); V2.5/V2.6 fixes were in source but server not restarted. All 6 simulation tests pass. `gerald_bridge.py` unchanged. No app/dashboard UI changes.

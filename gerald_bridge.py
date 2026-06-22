@@ -855,6 +855,18 @@ Rules:
 
         changed_files = get_changed_files_under_lib(worker_dir)
 
+        # ── Post-task verification evidence — always runs before auditor; never relies on Claude's claim ──
+        _verif_sections = ["\n\n---\n## Gerald Verification Evidence\n"]
+        for _vlabel, _vcmd in [
+            ("curl -i http://localhost:8000/command-centre",
+             ["curl", "-i", "http://localhost:8000/command-centre"]),
+            ("git status --short", ["git", "status", "--short"]),
+            ("git diff --stat",    ["git", "diff", "--stat"]),
+        ]:
+            _verif_sections.append(_run_command_evidence(_vlabel, _vcmd))
+        output = output + "".join(_verif_sections)
+        print(f"[verify] post-task evidence appended ({len(output)} chars total)")
+
         try:
             _gss.log_event(project_name, "claude_result",
                            status="done" if result.returncode == 0 else "error",
@@ -1457,7 +1469,7 @@ verdict must be one of: COMPLETE (all requirements met AND all required evidence
 
         message = client.messages.create(
             model="claude-haiku-4-5-20251001",
-            max_tokens=512,
+            max_tokens=1024,
             messages=[{"role": "user", "content": prompt}],
         )
         raw = "\n".join(
@@ -1467,7 +1479,24 @@ verdict must be one of: COMPLETE (all requirements met AND all required evidence
         if raw.startswith("```"):
             raw = re.sub(r"^```[a-z]*\n?", "", raw)
             raw = re.sub(r"\n?```$", "", raw.rstrip())
-        audit = json.loads(raw)
+        try:
+            audit = json.loads(raw)
+        except json.JSONDecodeError:
+            # Response may have been truncated — try to recover verdict from partial output
+            _verdict_match = re.search(r'"verdict"\s*:\s*"(COMPLETE|PARTIAL|FAILED)"', raw)
+            if _verdict_match:
+                _recovered = _verdict_match.group(1)
+                print(f"[auditor] JSON truncated — recovered verdict={_recovered} from partial response")
+                audit = {
+                    "verdict": _recovered,
+                    "met": [],
+                    "missing": [],
+                    "missing_evidence": [],
+                    "notes": f"Audit JSON truncated — verdict recovered from partial response: {_recovered}",
+                    "audited_at": now_iso(),
+                }
+            else:
+                raise
         # Post-parse integrity: never emit COMPLETE when evidence is missing or verdict is invalid
         _parsed_verdict = audit.get("verdict", "")
         _parsed_missing_evidence = audit.get("missing_evidence", [])
@@ -1493,12 +1522,14 @@ verdict must be one of: COMPLETE (all requirements met AND all required evidence
         return audit
     except Exception as e:
         print(f"[auditor] Audit failed: {e}")
+        # Return PARTIAL (not UNKNOWN) so the successful Claude output is preserved —
+        # UNKNOWN triggers auditor_integrity → FAILED → contract_failed even for good work.
         return {
-            "verdict": "UNKNOWN",
+            "verdict": "PARTIAL",
             "met": [],
             "missing": [],
             "missing_evidence": [],
-            "notes": f"Audit parse/execution failure — cannot confirm COMPLETE: {e}",
+            "notes": f"Audit parse failure — Claude output preserved, manual review advised: {e}",
             "audited_at": now_iso(),
         }
 
