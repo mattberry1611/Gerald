@@ -49,6 +49,7 @@ class AppState extends ChangeNotifier {
   DateTime? _taskStartTime;
   Timer? _completeTimer;
   Timer? _elapsedTimer;
+  String? _lastDisplayedTaskId;
 
   // ── Per-project message isolation ──────────────────────────────────────────
   // Keys: project name or _kGlobal when no project selected
@@ -222,12 +223,41 @@ class AppState extends ChangeNotifier {
 
   // ── Result reading ─────────────────────────────────────────────────────────
 
+  // Terminal stages that carry a completed result in /task/truth
+  static const _kTerminalStages = {
+    'completed', 'done', 'partial', 'contract_failed', 'failed',
+  };
+
   Future<void> _readResult() async {
     try {
       _taskStage = TaskStage.finalising;
       notifyListeners();
 
-      final result = await _api.readResult();
+      // Prefer /task/truth when the canonical stage signals completion.
+      Map<String, dynamic> result = {};
+      String? truthTaskId;
+
+      try {
+        final truth = await _api.getTaskTruth();
+        final stage = (truth['stage'] as String? ?? '').toLowerCase();
+        final truthOutput = (truth['output'] as String? ?? '').trim();
+        truthTaskId = truth['task_id'] as String?;
+
+        if (_kTerminalStages.contains(stage) && truthOutput.isNotEmpty) {
+          result = {
+            'status': 'ok',
+            'output': truthOutput,
+            'summary': '',
+            'error': truth['error'] as String? ?? '',
+            'task_id': truthTaskId,
+          };
+        }
+      } catch (_) {}
+
+      // Fall back to /read?project= if truth fetch missed or output was empty.
+      if (result.isEmpty) {
+        result = await _api.readResult(project: _selectedProject);
+      }
 
       if (result['status'] == 'empty') {
         _clearTaskProgress();
@@ -238,11 +268,21 @@ class AppState extends ChangeNotifier {
       final summary = result['summary'] as String? ?? '';
       final error = result['error'] as String? ?? '';
       final isError = result['status'] == 'error';
+      final resultTaskId = (result['task_id'] as String?) ?? truthTaskId;
 
       final mainText = summary.isNotEmpty ? summary : output;
 
       if (mainText.isNotEmpty) {
+        // Deduplicate: skip if this task's result was already displayed.
+        if (resultTaskId != null &&
+            resultTaskId.isNotEmpty &&
+            resultTaskId == _lastDisplayedTaskId) {
+          _clearTaskProgress();
+          return;
+        }
+
         _addMessage('gerald', mainText);
+        _lastDisplayedTaskId = resultTaskId;
         _log('Response received');
         final preview =
             mainText.length > 80 ? '${mainText.substring(0, 80)}...' : mainText;
@@ -655,6 +695,7 @@ class AppState extends ChangeNotifier {
     _projectMessages.remove(key);
     _activityLog.clear();
     _commandQueue.clear();
+    _lastDisplayedTaskId = null;
     _clearTaskProgress();
     notifyListeners();
   }

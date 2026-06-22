@@ -27,9 +27,12 @@ class GeraldApi {
     throw Exception('Backend error: ${response.statusCode}');
   }
 
-  Future<Map<String, dynamic>> readResult() async {
+  Future<Map<String, dynamic>> readResult({String? project}) async {
+    final uri = (project != null && project.isNotEmpty)
+        ? Uri.parse('$baseUrl/read?project=${Uri.encodeComponent(project)}')
+        : Uri.parse('$baseUrl/read');
     final response = await http
-        .get(Uri.parse('$baseUrl/read'))
+        .get(uri)
         .timeout(const Duration(seconds: 10));
 
     if (response.statusCode == 200) {
@@ -38,6 +41,17 @@ class GeraldApi {
       return {'output': decoded.toString()};
     }
     throw Exception('Read error: ${response.statusCode}');
+  }
+
+  Future<Map<String, dynamic>> getTaskTruth() async {
+    final response = await http
+        .get(Uri.parse('$baseUrl/task/truth'))
+        .timeout(const Duration(seconds: 5));
+    if (response.statusCode == 200) {
+      final decoded = jsonDecode(response.body);
+      if (decoded is Map<String, dynamic>) return decoded;
+    }
+    return {};
   }
 
   Future<Map<String, dynamic>> getStatus() async {
