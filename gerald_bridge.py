@@ -26,7 +26,7 @@ import build_verifier
 import multi_ai_router
 from gerald_brain import inject_brain_context
 from gerald_openai_brain import ask_gerald, decide_supervisor_action, generate_risk_review
-from gerald_vision import review_image
+from gerald_vision import review_image, analyze_image_for_task
 from gerald_request_review import review_task_result
 import gerald_issue_memory
 import gerald_session_state as _gss
@@ -98,6 +98,49 @@ _STATUS_CHECK_IMPERATIVE_STARTERS = (
     "render ", "style ", "design ", "format ", "clean ", "sort ", "filter ",
     "fetch ", "load ", "save ", "send ", "push ", "test ", "verify ",
 )
+
+
+_IMAGE_URL_RE = re.compile(
+    r"Uploaded image available at:\s*(/dashboard/uploads/[^\s\n]+)"
+)
+
+
+def _inject_image_analysis(task_text: str) -> str:
+    """If task_text contains an uploaded image URL, analyze the image and inject
+    a structured text description so Claude Code can use it as context."""
+    m = _IMAGE_URL_RE.search(task_text)
+    if not m:
+        return task_text
+
+    image_rel_url = m.group(1).strip()
+    image_path = os.path.join(BASE, image_rel_url.lstrip("/"))
+
+    if not os.path.exists(image_path):
+        print(f"[image-analysis] File not found: {image_path} — skipping analysis")
+        return task_text
+
+    try:
+        import mimetypes as _mimetypes
+        mime_type = _mimetypes.guess_type(image_path)[0] or "image/jpeg"
+        with open(image_path, "rb") as fh:
+            image_bytes = fh.read()
+
+        analysis = analyze_image_for_task(image_bytes, mime_type)
+        analysis_block = (
+            f"\n\n=== IMAGE ANALYSIS ===\n"
+            f"File: {os.path.basename(image_path)}\n\n"
+            f"{analysis}\n"
+            f"=== END IMAGE ANALYSIS ===\n"
+        )
+        augmented = task_text + analysis_block
+        print(
+            f"[image-analysis] Analyzed {len(image_bytes)} bytes → "
+            f"{len(analysis)} chars of context injected"
+        )
+        return augmented
+    except Exception as exc:
+        print(f"[image-analysis] Analysis failed ({exc}), continuing without analysis")
+        return task_text
 
 
 def _is_status_check_task(text: str) -> bool:
@@ -2462,6 +2505,9 @@ def start(payload: dict, background_tasks: BackgroundTasks):
 
     if not text:
         return {"ok": False, "error": "No task provided", "received_keys": list(payload.keys())}
+
+    # ── Image analysis: enrich task text with vision analysis before routing ───
+    text = _inject_image_analysis(text)
 
     # ── Voice command: "create project X" ─────────────────────────────────────
     detected_name = detect_create_project_name(text)

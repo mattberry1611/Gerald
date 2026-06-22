@@ -2,7 +2,7 @@
 # CommuteCoder — Current Status
 
 **Last Updated:** 2026-06-22
-**Version:** V3.4.7 — SHA256-based task-local file change tracking
+**Version:** V3.5.0 — Image Understanding Phase 1: backend vision analysis injected into task context
 
 ## What's Working
 
@@ -73,6 +73,7 @@
 | Auditor Integrity V2: review FAIL guard | ✅ auditor_integrity.handle_review_fail_enforcement() — review FAIL + COMPLETE audit → PARTIAL on completed outcomes |
 | Auditor Integrity V2: scope check guard | ✅ auditor_integrity.handle_scope_check() — forbidden files changed → PARTIAL (some allowed) or FAILED (all forbidden) |
 | Review layer: task-local file tracking | ✅ gerald_request_review.py — SHA256 hash snapshot on user_request; detects content changes even for pre-existing dirty files; returns per-file diffs |
+| Image Understanding Phase 1 | ✅ gerald_vision.analyze_image_for_task() + gerald_bridge._inject_image_analysis() — uploaded images analyzed via GPT-4.1 vision before Claude Code receives the task; structured analysis (description, UI details, visible text, summary) injected into task text |
 | V4 Phase 1: unique task_id per request | ✅ UUID generated at start of every real worker; stored in active_task.json + outbox data |
 | V4 Phase 1: durable task history | ✅ gerald_task_history_{project}.json — appended on every terminal state (complete/partial/failed/timeout); max 200 records |
 | V4 Phase 1: status checks isolated | ✅ truthful_status_response() writes to gerald_last_status_check.json — never overwrites real task outbox |
@@ -89,6 +90,7 @@ Remote phone-to-cloud file edits are now proven.
 - None known
 
 ## Recent Changes
+- **V3.5.0**: Image Understanding Phase 1 — `gerald_vision.py`: added `TASK_ANALYSIS_PROMPT` and `analyze_image_for_task(image_bytes, mime_type)` function that uses GPT-4.1 vision to produce a 4-section structured analysis (description, UI/layout/style, visible text, task-relevant summary). `gerald_bridge.py`: added `_IMAGE_URL_RE` regex, `_inject_image_analysis(task_text)` helper, and updated import; in `/start`, `text = _inject_image_analysis(text)` called immediately after text extraction — detects `"Uploaded image available at: /dashboard/uploads/..."` pattern, reads file from disk, runs vision analysis, appends `=== IMAGE ANALYSIS === ... === END IMAGE ANALYSIS ===` block to task text before routing to Claude Code. No changes to command_centre, Flutter app, or dashboard UI. Server restart required.
 - **V3.4.7**: SHA256-based task-local file change tracking — `gerald_request_review.py`: replaced filename-set baseline with SHA256 hash baseline; added `_sha256_file()`, `_compute_dirty_hashes()`, `_get_task_local_changes()`, `_git_diff_file()`; `snapshot_pre_task_files()` now stores `{filepath: sha256}` dict; `_load_task_baseline()` returns that dict; `review_task_result()` uses `_get_task_local_changes()` (hash comparison) instead of set subtraction; `file_diffs` field added to review result with per-file unified diffs. Root cause fixed: files already dirty before a task now correctly appear in `git_changed` when their content changes during the task. Verified: `command_centre/index.html` ACTIVE→READY detected even when pre-dirty. Server restart required.
 - **V3.4.6**: Task-local file change tracking — `gerald_request_review.py`: added `_TASK_BASELINE_FILE`, `snapshot_pre_task_files()`, and `_load_task_baseline()`; `review_task_result()` now computes `git_changed = post_dirty - baseline` instead of full repo `git diff --name-only`. `gerald_session_state.py`: added `user_request` hook in `log_event()` that calls `snapshot_pre_task_files()` before the background worker starts. Root cause fixed: pre-existing uncommitted files no longer trigger false-positive scope violations. Server restart required.
 - **V3.4.5**: Decision Agent prompt + classifier — `gerald_openai_brain.py`: (1) Added `_IMPLEMENTATION_SIGNALS` list (`code change required`, `backend code change`, `modify `, `implement `, `fix `, `return code changes`); `classify_message_intent()` now checks implementation signals BEFORE investigation signals — if any match, returns `new_task_request` immediately, so the Decision Agent never sees MESSAGE CLASS `investigation_request` for implementation tasks. (2) Added IMPLEMENTATION OVERRIDE rule at top of `decide_supervisor_action()` prompt: if the message contains any implementation keyword, ALWAYS choose `claude_code`, NEVER `readonly_investigation` — overrides all other rules. Both layers work with the existing post-Decision-Agent override in `gerald_bridge.py`. 7-case Python test: all pass. Server restart required.
