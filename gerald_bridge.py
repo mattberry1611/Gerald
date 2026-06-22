@@ -1039,9 +1039,11 @@ def write_task_state(task: str, project: str, stage: str, detail: str = "", file
 
     _existing_task_id = _existing.get("task_id")
     _existing_started = _existing.get("started")
+    _effective_task_id = task_id or _existing_task_id or ""
+    _is_new_task = bool(task_id and task_id != _existing_task_id)
 
     data = {
-        "task_id": task_id or _existing_task_id or "",
+        "task_id": _effective_task_id,
         "task": task,
         "project": project,
         "stage": stage,
@@ -1050,9 +1052,9 @@ def write_task_state(task: str, project: str, stage: str, detail: str = "", file
         "output": output,
         "error": error,
         "updated": datetime.now(timezone.utc).isoformat(),
-        "started": _existing_started or datetime.now(timezone.utc).isoformat(),
-        "contract": contract if contract is not None else _existing.get("contract"),
-        "audit": audit if audit is not None else _existing.get("audit"),
+        "started": datetime.now(timezone.utc).isoformat() if _is_new_task else (_existing_started or datetime.now(timezone.utc).isoformat()),
+        "contract": contract if contract is not None else (None if _is_new_task else _existing.get("contract")),
+        "audit": audit if audit is not None else (None if _is_new_task else _existing.get("audit")),
         "source_of_truth": "canonical",
     }
 
@@ -1065,8 +1067,8 @@ def write_task_state(task: str, project: str, stage: str, detail: str = "", file
         files_changed=files_changed or [],
         output=output,
         error=error,
-        contract=data.get("contract"),
-        audit=data.get("audit"),
+        contract=contract,
+        audit=audit,
         task_id=data.get("task_id"),
     )
     if stage in LIFECYCLE_STAGES:
@@ -2252,7 +2254,7 @@ def run_direct_answer(task_text: str, project_name: str, message: str):
             )
             write_status("needs_clarification", "Gerald needs clarification")
         else:
-            write_task_state(task_text, project_name, "completed", "Gerald answered", files_changed=[], output=reply, error="", task_id=_task_id)
+            write_task_state(task_text, project_name, "completed", "Gerald answered", files_changed=[], output=reply, error="", contract={}, audit={}, task_id=_task_id)
             write_status("idle", "Gerald answered")
     except Exception as e:
         err = str(e)

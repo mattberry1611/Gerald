@@ -80,8 +80,8 @@ def transition(
         files_changed=files_changed if files_changed is not None else previous.get("files_changed", []),
         output=output,
         error=error,
-        contract=contract,
-        audit=audit,
+        contract=contract if contract is not None else None,
+        audit=audit if audit is not None else None,
         task_id=task_id or previous.get("task_id", ""),
     )
 
@@ -110,8 +110,8 @@ def mark_executing(task: str = "", project: str = "", task_id: str = None, detai
 def mark_verifying(task: str = "", project: str = "", task_id: str = None, detail: str = "Verifying", files_changed=None, contract: dict = None):
     return transition("verifying", task=task, project=project, task_id=task_id, detail=detail, files_changed=files_changed, contract=contract)
 
-def mark_completed(task: str = "", project: str = "", task_id: str = None, detail: str = "Completed", files_changed=None, output: str = "", audit: dict = None):
-    return transition("completed", task=task, project=project, task_id=task_id, detail=detail, files_changed=files_changed, output=output, audit=audit)
+def mark_completed(task: str = "", project: str = "", task_id: str = None, detail: str = "Completed", files_changed=None, output: str = "", audit: dict = None, contract: dict = None):
+    return transition("completed", task=task, project=project, task_id=task_id, detail=detail, files_changed=files_changed, output=output, audit=audit, contract=contract)
 
 def mark_failed(task: str = "", project: str = "", task_id: str = None, detail: str = "Failed", error: str = "", audit: dict = None):
     return transition("failed", task=task, project=project, task_id=task_id, detail=detail, error=error, audit=audit, force=True)
