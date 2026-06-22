@@ -29,6 +29,9 @@ import gerald_issue_memory
 import gerald_session_state as _gss
 from verification_layer import VerificationLayer
 
+BASE = "/opt/Gerald"
+ACTIVE_TASK = os.path.join(BASE, "active_task.json")
+
 app = FastAPI()
 
 app.add_middleware(
@@ -1875,10 +1878,11 @@ def run_gerald_brain(task_text: str, project_name: str = "CommuteCoder"):
                 "Gerald needs clarification",
                 output=reply,
                 error="",
+                task_id=_task_id,
             )
             write_status("needs_clarification", "Gerald needs clarification")
         else:
-            write_task_state(task_text, project_name, "completed", "Gerald Brain finished", output=reply)
+            write_task_state(task_text, project_name, "completed", "Gerald Brain finished", output=reply, task_id=_task_id)
             write_status("idle", "Gerald Brain finished")
         print("✅ GERALD BRAIN FINISHED")
         print(reply)
