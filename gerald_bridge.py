@@ -2374,6 +2374,12 @@ def run_direct_answer(task_text: str, project_name: str, message: str):
         write_status("error", err)
         print("❌ RUN_DIRECT_ANSWER ERROR:", err)
 
+
+@app.get("/command-centre")
+def command_centre():
+    from fastapi.responses import FileResponse
+    return FileResponse("/opt/Gerald/command_centre/index.html")
+
 @app.post("/start")
 def start(payload: dict, background_tasks: BackgroundTasks):
     print("\n====== /start PAYLOAD ======")
