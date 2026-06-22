@@ -1249,11 +1249,84 @@ MANDATORY: List EVERY numbered requirement from Matt's request as a separate str
 
 
 def audit_task_contract(contract: dict, claude_output: str, files_changed: list, project_name: str = "CommuteCoder") -> dict:
+
+    def _auto_capture_evidence(contract: dict, files_changed: list) -> str:
+        """
+        Capture real command/file evidence before audit so Claude claims are not trusted blindly.
+        Currently supports simple file evidence:
+        - ls -la
+        - cat
+        - wc -c
+        - od -c
+        """
+        import subprocess
+        from pathlib import Path
+
+        evidence_lines = []
+        project_root = Path("/opt/Gerald")
+        likely_files = contract.get("likely_files", []) or []
+        changed = files_changed or []
+
+        candidates = []
+        for item in likely_files + changed:
+            if not item:
+                continue
+            item = str(item).strip()
+            if item.startswith("/"):
+                path = Path(item)
+            else:
+                path = project_root / item
+            if path not in candidates:
+                candidates.append(path)
+
+        evidence_lines.append("\n\n--- AUTO-CAPTURED EVIDENCE ---")
+
+        if not candidates:
+            evidence_lines.append("No likely_files or changed files available for automatic evidence capture.")
+            return "\n".join(evidence_lines)
+
+        for path in candidates:
+            evidence_lines.append(f"\nFILE: {path}")
+
+            commands = [
+                ["ls", "-la", str(path)],
+                ["wc", "-c", str(path)],
+                ["od", "-c", str(path)],
+            ]
+
+            if path.exists() and path.is_file():
+                commands.insert(1, ["cat", str(path)])
+
+            for cmd in commands:
+                label = " ".join(cmd)
+                try:
+                    result = subprocess.run(
+                        cmd,
+                        cwd=str(project_root),
+                        capture_output=True,
+                        text=True,
+                        timeout=10,
+                    )
+                    evidence_lines.append(f"$ {label}")
+                    evidence_lines.append(f"exit_code={result.returncode}")
+                    if result.stdout:
+                        evidence_lines.append(result.stdout.rstrip())
+                    if result.stderr:
+                        evidence_lines.append("STDERR:")
+                        evidence_lines.append(result.stderr.rstrip())
+                except Exception as e:
+                    evidence_lines.append(f"$ {label}")
+                    evidence_lines.append(f"ERROR: {e}")
+
+        evidence_lines.append("--- END AUTO-CAPTURED EVIDENCE ---\n")
+        return "\n".join(evidence_lines)
+
     """Auditor: compare Claude's delivered result against the Task Contract requirements."""
     try:
         requirements = contract.get("requirements_checklist", [])
         definition_of_done = contract.get("definition_of_done", "")
         evidence_required = contract.get("evidence_required", [])
+        claude_output = (claude_output or "") + _auto_capture_evidence(contract, files_changed)
         if not requirements and not definition_of_done:
             return {"verdict": "UNKNOWN", "met": [], "missing": [], "missing_evidence": [], "notes": "Audit skipped: no requirements to evaluate — cannot confirm COMPLETE", "audited_at": now_iso()}
 
