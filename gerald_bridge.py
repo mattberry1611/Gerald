@@ -394,6 +394,23 @@ def _looks_like_implementation_request(text: str) -> bool:
     return any(x in lower for x in phrases)
 
 
+def _is_explicit_build_or_analyze_request(text: str) -> bool:
+    """Return True when the task explicitly requests flutter build/analyze commands or build evidence.
+
+    Used to lift the 'Do not build APK' guard and require real command output.
+    """
+    lower = (text or "").lower()
+    phrases = [
+        "flutter analyze",
+        "flutter build apk",
+        "flutter build",
+        "apk path",
+        "build evidence",
+        "build apk",
+    ]
+    return any(p in lower for p in phrases)
+
+
 def _run_command_evidence(label: str, command: list, timeout: int = 20) -> str:
     import subprocess
     try:
@@ -787,6 +804,21 @@ def run_claude_code_worker(task_text: str, project_name: str = "CommuteCoder"):
         else "- Inspect relevant Flutter files first."
     )
 
+    if _is_explicit_build_or_analyze_request(task_text):
+        _build_rule = (
+            "- Execute the explicitly requested flutter commands (flutter analyze,"
+            " flutter build apk, etc.) and capture the EXACT stdout, stderr, and exit"
+            " code in your response. If a command fails, return the full error output."
+            " If flutter build apk succeeds, return the APK path."
+        )
+        _summary_rule = (
+            "- After completing the requested commands, provide a concise summary"
+            " reporting the exact results (pass/fail, APK path if built, full error if failed)."
+        )
+    else:
+        _build_rule = "- Do not build APK."
+        _summary_rule = "- After editing, summarize exactly which files changed and what changed."
+
     safe_prompt = f"""
 You are Claude Code working for Gerald.
 
@@ -801,8 +833,8 @@ Rules:
 - Make the smallest safe change that satisfies Matt's request.
 - Preserve existing behaviour and functionality.
 {bridge_rule}
-- Do not build APK.
-- After editing, summarize exactly which files changed and what changed.
+{_build_rule}
+{_summary_rule}
 """
 
     _proj_path, _ = resolve_project(project_name)
@@ -1515,8 +1547,8 @@ DEFINITION OF DONE:
 EVIDENCE REQUIRED (checks that demand real captured output — not simulated, hypothetical, or example data):
 {evidence_text}
 
-CLAUDE'S OUTPUT (first 3000 chars):
-{claude_output[:3000]}
+CLAUDE'S OUTPUT (first 6000 chars):
+{claude_output[:6000]}
 
 FILES CHANGED:
 {files_text}
