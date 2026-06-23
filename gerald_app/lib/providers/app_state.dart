@@ -21,6 +21,7 @@ class Message {
   final String content;
   final DateTime timestamp;
   final String? imagePath;
+  final Map<String, dynamic>? resultCard;
 
   Message({
     required this.id,
@@ -28,6 +29,7 @@ class Message {
     required this.content,
     required this.timestamp,
     this.imagePath,
+    this.resultCard,
   });
 }
 
@@ -281,7 +283,16 @@ class AppState extends ChangeNotifier {
           return;
         }
 
-        _addMessage('gerald', mainText);
+        // Fetch structured result card for terminal states.
+        Map<String, dynamic>? resultCard;
+        try {
+          final rc = await _api.getTaskResult(project: _selectedProject);
+          if (rc['is_terminal'] == true) {
+            resultCard = Map<String, dynamic>.from(rc);
+          }
+        } catch (_) {}
+
+        _addMessage('gerald', mainText, resultCard: resultCard);
         _lastDisplayedTaskId = resultTaskId;
         _log('Response received');
         final preview =
@@ -702,7 +713,7 @@ class AppState extends ChangeNotifier {
 
   // ── Private helpers ────────────────────────────────────────────────────────
 
-  void _addMessage(String role, String content, {String? imagePath}) {
+  void _addMessage(String role, String content, {String? imagePath, Map<String, dynamic>? resultCard}) {
     final key = _selectedProject ?? _kGlobal;
     _projectMessages.putIfAbsent(key, () => []).add(Message(
           id: '${DateTime.now().millisecondsSinceEpoch}_$role',
@@ -710,6 +721,7 @@ class AppState extends ChangeNotifier {
           content: content,
           timestamp: DateTime.now(),
           imagePath: imagePath,
+          resultCard: resultCard,
         ));
     notifyListeners();
   }

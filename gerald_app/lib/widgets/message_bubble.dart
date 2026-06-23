@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../providers/app_state.dart';
 import '../theme.dart';
 
@@ -14,10 +15,17 @@ class MessageBubble extends StatefulWidget {
 
 class _MessageBubbleState extends State<MessageBubble> {
   bool _showTs = false;
+  bool _filesExpanded = false;
 
   @override
   Widget build(BuildContext context) {
     final isUser = widget.message.role == 'user';
+
+    // Result card takes over the full bubble for terminal task states.
+    if (!isUser && widget.message.resultCard != null) {
+      return _buildResultCard(context, widget.message.resultCard!);
+    }
+
     final align = isUser ? CrossAxisAlignment.end : CrossAxisAlignment.start;
 
     final hasImage = widget.message.imagePath != null;
@@ -215,5 +223,330 @@ class _MessageBubbleState extends State<MessageBubble> {
     }
     return Column(
         crossAxisAlignment: CrossAxisAlignment.start, children: widgets);
+  }
+
+  Widget _buildResultCard(BuildContext context, Map<String, dynamic> card) {
+    final status = (card['status'] as String? ?? '').toLowerCase();
+    final summary = card['summary'] as String? ?? '';
+    final failureReason = card['failure_reason'] as String?;
+    final nextAction = card['next_action'] as String?;
+    final files = (card['files_changed'] as List?)?.cast<String>() ?? [];
+    final apkBuilt = card['apk_built'] == true;
+    final apkUrl = card['apk_download_url'] as String?;
+
+    final Color headerColor;
+    final IconData headerIcon;
+    final String headerLabel;
+    switch (status) {
+      case 'completed':
+        headerColor = const Color(0xFF22C55E);
+        headerIcon = Icons.check_circle_outline;
+        headerLabel = 'COMPLETED';
+        break;
+      case 'partial':
+        headerColor = const Color(0xFFF59E0B);
+        headerIcon = Icons.warning_amber_outlined;
+        headerLabel = 'PARTIALLY COMPLETED';
+        break;
+      case 'contract_failed':
+        headerColor = const Color(0xFFEF4444);
+        headerIcon = Icons.cancel_outlined;
+        headerLabel = 'CONTRACT FAILED';
+        break;
+      case 'failed':
+        headerColor = const Color(0xFFEF4444);
+        headerIcon = Icons.error_outline;
+        headerLabel = 'FAILED';
+        break;
+      default:
+        headerColor = kAccentBlue;
+        headerIcon = Icons.info_outline;
+        headerLabel = status.toUpperCase();
+    }
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // GERALD label
+          Padding(
+            padding: const EdgeInsets.only(left: 6, bottom: 4),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 14,
+                  height: 14,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(3),
+                    boxShadow: [
+                      BoxShadow(color: kAccentBlue.withOpacity(0.3), blurRadius: 6),
+                    ],
+                  ),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(3),
+                    child: Image.asset('assets/gerald_logo.png', fit: BoxFit.cover),
+                  ),
+                ),
+                const SizedBox(width: 5),
+                Text(
+                  'GERALD',
+                  style: TextStyle(
+                    color: kAccentBlue.withOpacity(0.85),
+                    fontSize: 10,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 1.5,
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          // Card body
+          Container(
+            width: double.infinity,
+            decoration: BoxDecoration(
+              color: const Color(0xFF0D1B2A),
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: headerColor.withOpacity(0.35), width: 1.2),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Status header bar
+                Container(
+                  decoration: BoxDecoration(
+                    color: headerColor.withOpacity(0.12),
+                    borderRadius: const BorderRadius.vertical(top: Radius.circular(13)),
+                  ),
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                  child: Row(
+                    children: [
+                      Icon(headerIcon, color: headerColor, size: 18),
+                      const SizedBox(width: 8),
+                      Text(
+                        headerLabel,
+                        style: TextStyle(
+                          color: headerColor,
+                          fontWeight: FontWeight.w800,
+                          fontSize: 12,
+                          letterSpacing: 1.2,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+
+                Padding(
+                  padding: const EdgeInsets.all(14),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Summary
+                      if (summary.isNotEmpty)
+                        SelectableText(
+                          summary,
+                          style: const TextStyle(
+                            fontSize: 14,
+                            height: 1.45,
+                            color: kTextPrimary,
+                          ),
+                        ),
+
+                      // Failure reason
+                      if (failureReason != null && failureReason.isNotEmpty) ...[
+                        const SizedBox(height: 10),
+                        Container(
+                          padding: const EdgeInsets.all(10),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF1A0A0A),
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(
+                              color: const Color(0xFFEF4444).withOpacity(0.25),
+                            ),
+                          ),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Icon(Icons.report_outlined,
+                                  color: Color(0xFFEF4444), size: 14),
+                              const SizedBox(width: 6),
+                              Expanded(
+                                child: SelectableText(
+                                  failureReason,
+                                  style: const TextStyle(
+                                    fontSize: 12.5,
+                                    color: Color(0xFFFFB3B3),
+                                    height: 1.4,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+
+                      // Files changed
+                      if (files.isNotEmpty) ...[
+                        const SizedBox(height: 10),
+                        GestureDetector(
+                          onTap: () => setState(() => _filesExpanded = !_filesExpanded),
+                          child: Row(
+                            children: [
+                              Icon(Icons.edit_document,
+                                  size: 13, color: kAccentBlue.withOpacity(0.8)),
+                              const SizedBox(width: 5),
+                              Text(
+                                '${files.length} file${files.length == 1 ? '' : 's'} changed',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: kAccentBlue.withOpacity(0.8),
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                              const SizedBox(width: 4),
+                              Icon(
+                                _filesExpanded
+                                    ? Icons.keyboard_arrow_up
+                                    : Icons.keyboard_arrow_down,
+                                size: 14,
+                                color: kTextSecondary,
+                              ),
+                            ],
+                          ),
+                        ),
+                        if (_filesExpanded) ...[
+                          const SizedBox(height: 6),
+                          ...files.map((f) => Padding(
+                                padding: const EdgeInsets.symmetric(vertical: 2),
+                                child: Row(
+                                  children: [
+                                    const Icon(Icons.circle,
+                                        size: 5, color: kTextSecondary),
+                                    const SizedBox(width: 6),
+                                    Expanded(
+                                      child: Text(
+                                        f,
+                                        style: const TextStyle(
+                                          fontFamily: 'monospace',
+                                          fontSize: 11.5,
+                                          color: kTextSecondary,
+                                        ),
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              )),
+                        ],
+                      ],
+
+                      // APK row
+                      if (apkBuilt) ...[
+                        const SizedBox(height: 10),
+                        Row(
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 8, vertical: 4),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF166534),
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              child: const Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(Icons.android, size: 13, color: Color(0xFF86EFAC)),
+                                  SizedBox(width: 4),
+                                  Text(
+                                    'APK BUILT',
+                                    style: TextStyle(
+                                      color: Color(0xFF86EFAC),
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w700,
+                                      letterSpacing: 0.8,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            if (apkUrl != null) ...[
+                              const SizedBox(width: 8),
+                              GestureDetector(
+                                onTap: () => launchUrl(Uri.parse(apkUrl)),
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 8, vertical: 4),
+                                  decoration: BoxDecoration(
+                                    color: kAccentBlue.withOpacity(0.15),
+                                    borderRadius: BorderRadius.circular(6),
+                                    border: Border.all(
+                                        color: kAccentBlue.withOpacity(0.4)),
+                                  ),
+                                  child: const Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Icon(Icons.download,
+                                          size: 13, color: kAccentBlue),
+                                      SizedBox(width: 4),
+                                      Text(
+                                        'DOWNLOAD',
+                                        style: TextStyle(
+                                          color: kAccentBlue,
+                                          fontSize: 11,
+                                          fontWeight: FontWeight.w700,
+                                          letterSpacing: 0.8,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                      ],
+
+                      // Next action
+                      if (nextAction != null && nextAction.isNotEmpty) ...[
+                        const SizedBox(height: 12),
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 12, vertical: 8),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF0A1628),
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: kBorderColor),
+                          ),
+                          child: Row(
+                            children: [
+                              Icon(Icons.arrow_forward,
+                                  size: 13, color: kTextSecondary),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  nextAction,
+                                  style: const TextStyle(
+                                    fontSize: 12.5,
+                                    color: kTextSecondary,
+                                    fontStyle: FontStyle.italic,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }

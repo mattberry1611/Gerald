@@ -54,6 +54,18 @@ class GeraldApi {
     return {};
   }
 
+  Future<Map<String, dynamic>> getTaskResult({String? project}) async {
+    final uri = (project != null && project.isNotEmpty)
+        ? Uri.parse('$baseUrl/task/result?project=${Uri.encodeComponent(project)}')
+        : Uri.parse('$baseUrl/task/result');
+    final response = await http.get(uri).timeout(const Duration(seconds: 5));
+    if (response.statusCode == 200) {
+      final decoded = jsonDecode(response.body);
+      if (decoded is Map<String, dynamic>) return decoded;
+    }
+    return {};
+  }
+
   Future<Map<String, dynamic>> getStatus() async {
     final response = await http
         .get(Uri.parse('$baseUrl/status'))
@@ -306,18 +318,10 @@ class GeraldApi {
 
   // ── Design Studio ────────────────────────────────────────────────────────────
 
-  /// Derive the Design Studio service URL (port 8002) from the main baseUrl.
-  static String designStudioUrl(String baseUrl) {
-    try {
-      final uri = Uri.parse(baseUrl);
-      if (uri.hasPort) {
-        return uri.replace(port: 8002).toString();
-      }
-      return '${uri.scheme}://${uri.host}:8002';
-    } catch (_) {
-      return 'http://localhost:8002';
-    }
-  }
+  /// Returns the base URL to use for Design Studio endpoints (/design/*).
+  /// Design Studio is proxied through the main bridge at the same host/port,
+  /// so no port substitution is needed (avoids HTTP/HTTPS mismatch on port 8002).
+  static String designStudioUrl(String baseUrl) => baseUrl;
 
   /// Generate 1–3 visual UI concept images for [description].
   /// Calls POST /design/generate on the Design Studio service (port 8002).

@@ -12,6 +12,7 @@ import shlex
 import uuid
 import urllib.request
 import urllib.error
+import httpx
 from anthropic import Anthropic
 from openai import OpenAI
 from datetime import datetime, timezone
@@ -3434,6 +3435,43 @@ async def get_latest_comparison():
     return {"ok": True, "comparison": comparison}
 
 
+# ── Design Studio proxy ───────────────────────────────────────────────────────
+# Proxy /design/* through this HTTPS-capable bridge so mobile clients using
+# https://geraldai.com.au don't hit a bare-HTTP port 8002 (WRONG_VERSION_NUMBER).
+
+_DESIGN_STUDIO_BASE = "http://127.0.0.1:8002"
+
+
+@app.post("/design/generate")
+async def design_generate_proxy(request: Request):
+    body = await request.body()
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(
+            f"{_DESIGN_STUDIO_BASE}/design/generate",
+            content=body,
+            headers={"Content-Type": "application/json"},
+            timeout=120,
+        )
+    from fastapi.responses import Response as _Resp
+    return _Resp(content=resp.content, status_code=resp.status_code,
+                 media_type=resp.headers.get("content-type", "application/json"))
+
+
+@app.post("/design/iterate")
+async def design_iterate_proxy(request: Request):
+    body = await request.body()
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(
+            f"{_DESIGN_STUDIO_BASE}/design/iterate",
+            content=body,
+            headers={"Content-Type": "application/json"},
+            timeout=120,
+        )
+    from fastapi.responses import Response as _Resp
+    return _Resp(content=resp.content, status_code=resp.status_code,
+                 media_type=resp.headers.get("content-type", "application/json"))
+
+
 def _run_apk_build_background(project: str):
     global _build_running
     _build_running = True
@@ -3768,6 +3806,69 @@ def get_last_task_result(project: str = "CommuteCoder"):
     if not result:
         return {"found": False, "project": project}
     return {**result, "found": True}
+
+
+@app.get("/task/result")
+def get_task_result_card(project: str = "CommuteCoder"):
+    """Clean result card for the current task terminal state. Used by mobile result cards."""
+    state = read_task_state()
+    stage = (state.get("stage") or "idle").lower()
+
+    _TERMINAL = {"completed", "done", "failed", "contract_failed", "partial"}
+    is_terminal = stage in _TERMINAL
+
+    if stage in ("completed", "done"):
+        status = "completed"
+    elif stage in ("partial", "contract_failed", "failed"):
+        status = stage
+    else:
+        status = stage
+
+    files_changed = state.get("files_changed") or []
+    audit = state.get("audit") or {}
+    detail = (state.get("detail") or "")
+    output = (state.get("output") or "")
+    error = (state.get("error") or "")
+    audit_notes = audit.get("notes", "")
+
+    if status == "completed":
+        summary = detail or (output[:200] if output else "Task completed successfully.")
+        failure_reason = None
+        next_action = "Test the changes on device."
+    elif status == "partial":
+        summary = audit_notes or detail or "Task partially completed."
+        failure_reason = audit_notes or detail or "Some requirements were not met."
+        next_action = "Review partial results and follow up on missing items."
+    elif status == "contract_failed":
+        summary = audit_notes or detail or "Task failed contract requirements."
+        failure_reason = audit_notes or detail or "One or more requirements not met."
+        next_action = "Clarify requirements and retry the task."
+    elif status == "failed":
+        summary = error or detail or "Task failed."
+        failure_reason = error or detail or "Task execution failed."
+        next_action = "Clarify or retry the task."
+    else:
+        summary = detail or "Task in progress."
+        failure_reason = None
+        next_action = None
+
+    apk_built = os.path.exists(APK_MANIFEST_FILE) and os.path.exists(APK_SERVE_FILE)
+    apk_download_url = "/apk-latest/download" if apk_built else None
+
+    return {
+        "task_id": state.get("task_id", ""),
+        "is_terminal": is_terminal,
+        "status": status,
+        "summary": summary,
+        "files_changed": files_changed,
+        "apk_built": apk_built,
+        "apk_download_url": apk_download_url,
+        "failure_reason": failure_reason,
+        "next_action": next_action,
+        "task": state.get("task", ""),
+        "project": state.get("project", project),
+        "timestamp": state.get("updated", ""),
+    }
 
 
 @app.get("/task/truth")
