@@ -25,23 +25,18 @@ class _ConversationOrbState extends State<ConversationOrb>
   late AnimationController _waveCtrl;
   late AnimationController _burstCtrl;
 
-  late final List<_Particle> _particles;
-
   @override
   void initState() {
     super.initState();
 
-    // Build particles once with fixed seed for determinism
-    _particles = _buildParticles(seed: 73);
-
     _rotCtrl = AnimationController(
       vsync: this,
-      duration: const Duration(seconds: 10),
+      duration: const Duration(seconds: 18),
     )..repeat();
 
     _pulseCtrl = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 2200),
+      duration: const Duration(milliseconds: 3600),
     )..repeat(reverse: true);
 
     _waveCtrl = AnimationController(
@@ -70,25 +65,25 @@ class _ConversationOrbState extends State<ConversationOrb>
 
   void _applyState(OrbState s) {
     _rotCtrl.duration = switch (s) {
-      OrbState.speaking => const Duration(seconds: 3),
+      OrbState.speaking  => const Duration(seconds: 3),
       OrbState.listening => const Duration(seconds: 5),
-      OrbState.thinking => const Duration(seconds: 6),
-      OrbState.idle => const Duration(seconds: 12),
+      OrbState.thinking  => const Duration(seconds: 6),
+      OrbState.idle      => const Duration(seconds: 18),
     };
 
     _pulseCtrl.duration = switch (s) {
-      OrbState.speaking => const Duration(milliseconds: 700),
+      OrbState.speaking  => const Duration(milliseconds: 650),
       OrbState.listening => const Duration(milliseconds: 1100),
-      OrbState.thinking => const Duration(milliseconds: 1600),
-      OrbState.idle => const Duration(milliseconds: 2800),
+      OrbState.thinking  => const Duration(milliseconds: 2000),
+      OrbState.idle      => const Duration(milliseconds: 3600),
     };
   }
 
-  Color get _color => switch (widget.state) {
-        OrbState.speaking => kAccentPurple,
+  Color get _accentColor => switch (widget.state) {
+        OrbState.speaking  => kAccentPurple,
         OrbState.listening => kAccentGreen,
-        OrbState.thinking => kAccentBlue,
-        OrbState.idle => const Color(0xFF3E4060),
+        OrbState.thinking  => kAccentBlue,
+        OrbState.idle      => kAccentBlue,
       };
 
   bool get _isActive => widget.state != OrbState.idle;
@@ -99,12 +94,11 @@ class _ConversationOrbState extends State<ConversationOrb>
       animation: Listenable.merge([_rotCtrl, _pulseCtrl, _waveCtrl, _burstCtrl]),
       builder: (_, __) => CustomPaint(
         painter: _OrbPainter(
-          color: _color,
+          accentColor: _accentColor,
           rotation: _rotCtrl.value * 2 * pi,
           pulse: _pulseCtrl.value,
           wave: _waveCtrl.value,
           burst: _burstCtrl.value,
-          particles: _particles,
           isSpeaking: widget.state == OrbState.speaking,
           isActive: _isActive,
         ),
@@ -121,96 +115,49 @@ class _ConversationOrbState extends State<ConversationOrb>
     _burstCtrl.dispose();
     super.dispose();
   }
-
-  static List<_Particle> _buildParticles({required int seed}) {
-    final rng = Random(seed);
-    final list = <_Particle>[];
-
-    // Three orbital rings
-    const ringTilts = [0.25, 1.05, 1.85];
-    const ringSpeeds = [1.0, 0.7, 1.3];
-    const ringCounts = [6, 5, 4];
-
-    for (int r = 0; r < ringTilts.length; r++) {
-      for (int i = 0; i < ringCounts[r]; i++) {
-        final baseAngle = (i / ringCounts[r]) * 2 * pi + rng.nextDouble() * 0.4;
-        list.add(_Particle(
-          orbitTilt: ringTilts[r],
-          orbitRadius: 0.68 + rng.nextDouble() * 0.10,
-          startAngle: baseAngle,
-          speedFactor: ringSpeeds[r] * (0.85 + rng.nextDouble() * 0.3),
-          size: 2.2 + rng.nextDouble() * 2.8,
-        ));
-      }
-    }
-
-    // Scattered micro-particles
-    for (int i = 0; i < 5; i++) {
-      list.add(_Particle(
-        orbitTilt: rng.nextDouble() * pi,
-        orbitRadius: 0.50 + rng.nextDouble() * 0.20,
-        startAngle: rng.nextDouble() * 2 * pi,
-        speedFactor: 0.4 + rng.nextDouble() * 0.5,
-        size: 1.2 + rng.nextDouble() * 1.6,
-      ));
-    }
-
-    return list;
-  }
 }
 
-// ── Particle ──────────────────────────────────────────────────────────────────
+// ── Ring definitions ──────────────────────────────────────────────────────────
 
-class _Particle {
-  final double orbitTilt;
-  final double orbitRadius;
-  final double startAngle;
+class _Ring {
+  final double majorFactor;
+  final double minorFactor;
+  final double baseTilt;
   final double speedFactor;
-  final double size;
-
-  const _Particle({
-    required this.orbitTilt,
-    required this.orbitRadius,
-    required this.startAngle,
-    required this.speedFactor,
-    required this.size,
-  });
-}
-
-// ── Projected particle ────────────────────────────────────────────────────────
-
-class _PData {
-  final Offset pos;
-  final double z;
-  final double r;
   final double opacity;
-  const _PData({
-    required this.pos,
-    required this.z,
-    required this.r,
+
+  const _Ring({
+    required this.majorFactor,
+    required this.minorFactor,
+    required this.baseTilt,
+    required this.speedFactor,
     required this.opacity,
   });
 }
 
+const List<_Ring> _kRings = [
+  _Ring(majorFactor: 1.72, minorFactor: 0.30, baseTilt: -0.38, speedFactor: 1.00, opacity: 0.85),
+  _Ring(majorFactor: 1.58, minorFactor: 0.20, baseTilt:  0.55, speedFactor: 0.75, opacity: 0.70),
+  _Ring(majorFactor: 1.44, minorFactor: 0.13, baseTilt:  1.20, speedFactor: 0.55, opacity: 0.55),
+];
+
 // ── Orb painter ───────────────────────────────────────────────────────────────
 
 class _OrbPainter extends CustomPainter {
-  final Color color;
+  final Color accentColor;
   final double rotation;
   final double pulse;
   final double wave;
   final double burst;
-  final List<_Particle> particles;
   final bool isSpeaking;
   final bool isActive;
 
   const _OrbPainter({
-    required this.color,
+    required this.accentColor,
     required this.rotation,
     required this.pulse,
     required this.wave,
     required this.burst,
-    required this.particles,
     required this.isSpeaking,
     required this.isActive,
   });
@@ -218,130 +165,204 @@ class _OrbPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final center = Offset(size.width / 2, size.height / 2);
-    final baseR = size.width * 0.26;
-    final pulseScale = 1.0 + pulse * (isActive ? 0.10 : 0.04) + burst * 0.18;
-    final coreR = baseR * pulseScale;
+    final baseR  = size.width * 0.30;
+    final pulseScale = 1.0 + pulse * (isActive ? 0.13 : 0.07);
+    final coreR  = baseR * pulseScale;
+    final glowBoost = isActive ? 2.8 : 1.8;
 
-    // Wide ambient glow
-    _drawGlow(canvas, center, baseR * 4.0,
-        color.withOpacity(0.07 + pulse * 0.05));
+    // ── Bloom glow (wide → tight, dramatically stronger) ──────────────────
+    _drawGlow(canvas, center, baseR * 7.0,
+        accentColor.withOpacity((0.08 + pulse * 0.06) * glowBoost));
+    _drawGlow(canvas, center, baseR * 5.0,
+        accentColor.withOpacity((0.18 + pulse * 0.10) * glowBoost));
+    _drawGlow(canvas, center, baseR * 3.0,
+        accentColor.withOpacity((0.35 + pulse * 0.18) * glowBoost));
+    _drawGlow(canvas, center, baseR * 1.85,
+        accentColor.withOpacity((0.55 + pulse * 0.20) * glowBoost));
+    _drawGlow(canvas, center, baseR * 1.30,
+        accentColor.withOpacity((0.45 + pulse * 0.15) * glowBoost));
 
-    // Tight mid glow
-    _drawGlow(canvas, center, baseR * 2.2,
-        color.withOpacity(0.15 + pulse * 0.10));
+    // ── Back-half orbital rings (behind sphere) ────────────────────────────
+    canvas.save();
+    canvas.clipRect(Rect.fromLTRB(0, center.dy, size.width, size.height));
+    _drawAllRings(canvas, center, baseR);
+    canvas.restore();
 
-    // Speaking wave rings
+    // ── Core sphere ────────────────────────────────────────────────────────
+    _drawCore(canvas, center, coreR);
+    _drawHighlight(canvas, center, coreR);
+    _drawG(canvas, center, coreR);
+
+    // ── Front-half orbital rings (in front of sphere) ──────────────────────
+    canvas.save();
+    canvas.clipRect(Rect.fromLTRB(0, 0, size.width, center.dy));
+    _drawAllRings(canvas, center, baseR);
+    canvas.restore();
+
+    // ── Speaking wave rings ────────────────────────────────────────────────
     if (isSpeaking) {
-      for (int i = 0; i < 4; i++) {
-        final phase = (wave + i * 0.25) % 1.0;
-        final waveR = coreR + phase * baseR * 2.0;
-        final wavePaint = Paint()
-          ..color = color.withOpacity((1.0 - phase) * 0.32)
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 1.5;
-        canvas.drawCircle(center, waveR, wavePaint);
+      for (int i = 0; i < 5; i++) {
+        final phase = (wave + i * 0.20) % 1.0;
+        final waveR = coreR + phase * baseR * 2.2;
+        canvas.drawCircle(
+          center,
+          waveR,
+          Paint()
+            ..color = accentColor.withOpacity((1.0 - phase) * 0.42)
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 1.5,
+        );
       }
     }
 
-    // Compute + sort particles
-    final pData = _projectParticles(center, baseR);
-
-    // Back layer particles
-    for (final pd in pData) {
-      if (pd.z < 0) _drawParticle(canvas, pd);
-    }
-
-    // Core sphere
-    _drawCore(canvas, center, coreR);
-
-    // Specular highlight
-    _drawHighlight(canvas, center, coreR);
-
-    // Front layer particles
-    for (final pd in pData) {
-      if (pd.z >= 0) _drawParticle(canvas, pd);
-    }
-
-    // Burst ring
+    // ── Burst ring (state-transition effect) ───────────────────────────────
     if (burst > 0) {
-      final burstR = baseR + burst * baseR * 1.6;
-      final burstPaint = Paint()
-        ..color = color.withOpacity((1.0 - burst) * 0.55)
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 2.0;
-      canvas.drawCircle(center, burstR, burstPaint);
+      canvas.drawCircle(
+        center,
+        baseR + burst * baseR * 1.6,
+        Paint()
+          ..color = accentColor.withOpacity((1.0 - burst) * 0.55)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 2.0,
+      );
+    }
+  }
+
+  void _drawAllRings(Canvas canvas, Offset center, double baseR) {
+    for (final ring in _kRings) {
+      final tilt = ring.baseTilt + rotation * ring.speedFactor * 0.08;
+      canvas.save();
+      canvas.translate(center.dx, center.dy);
+      canvas.rotate(tilt);
+
+      final rect = Rect.fromCenter(
+        center: Offset.zero,
+        width:  ring.majorFactor * baseR * 2,
+        height: ring.minorFactor * baseR * 2,
+      );
+
+      // Outer glow halo — wide, blurred
+      canvas.drawOval(
+        rect,
+        Paint()
+          ..color = accentColor.withOpacity(ring.opacity * 0.28)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 10.0
+          ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 5.0),
+      );
+
+      // Mid glow layer
+      canvas.drawOval(
+        rect,
+        Paint()
+          ..color = accentColor.withOpacity(ring.opacity * 0.55)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 4.0
+          ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 2.0),
+      );
+
+      // Bright core trail — white-blue tinted
+      canvas.drawOval(
+        rect,
+        Paint()
+          ..color = Color.lerp(accentColor, Colors.white, 0.60)!
+              .withOpacity(ring.opacity * 0.80)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.4,
+      );
+
+      canvas.restore();
     }
   }
 
   void _drawGlow(Canvas canvas, Offset center, double radius, Color c) {
-    final paint = Paint()
-      ..shader = RadialGradient(
-        colors: [c, c.withOpacity(0.0)],
-      ).createShader(Rect.fromCircle(center: center, radius: radius));
-    canvas.drawCircle(center, radius, paint);
+    canvas.drawCircle(
+      center,
+      radius,
+      Paint()
+        ..shader = RadialGradient(
+          colors: [c, c.withOpacity(0.0)],
+        ).createShader(Rect.fromCircle(center: center, radius: radius)),
+    );
   }
 
   void _drawCore(Canvas canvas, Offset center, double r) {
-    final highlight = Color.lerp(Colors.white, color, 0.22)!;
-    final shadow = Color.lerp(color, Colors.black, 0.40)!;
-    final paint = Paint()
-      ..shader = RadialGradient(
-        center: const Alignment(-0.35, -0.45),
-        radius: 0.88,
-        colors: [highlight, color, shadow],
-        stops: const [0.0, 0.52, 1.0],
-      ).createShader(Rect.fromCircle(center: center, radius: r));
-    canvas.drawCircle(center, r, paint);
+    canvas.drawCircle(
+      center,
+      r,
+      Paint()
+        ..shader = RadialGradient(
+          center: const Alignment(-0.38, -0.45),
+          radius: 0.90,
+          colors: const [
+            Color(0xFFFFFFFF),  // pure white top-left
+            Color(0xFFB0D8FF),  // bright blue-white
+            Color(0xFF2979FF),  // electric blue mid
+            Color(0xFF1050B0),  // deep blue
+            Color(0xFF030C1E),  // near-black navy edge
+          ],
+          stops: const [0.0, 0.18, 0.45, 0.72, 1.0],
+        ).createShader(Rect.fromCircle(center: center, radius: r)),
+    );
   }
 
   void _drawHighlight(Canvas canvas, Offset center, double coreR) {
-    final hlCenter = center + Offset(-coreR * 0.28, -coreR * 0.30);
-    final hlR = coreR * 0.30;
-    final paint = Paint()
-      ..shader = RadialGradient(
-        colors: [
-          Colors.white.withOpacity(0.42),
-          Colors.white.withOpacity(0.0),
-        ],
-      ).createShader(Rect.fromCircle(center: hlCenter, radius: hlR));
-    canvas.drawCircle(hlCenter, hlR, paint);
+    // Primary highlight — large, vivid white-blue spot
+    final hlCenter = center + Offset(-coreR * 0.30, -coreR * 0.32);
+    final hlR = coreR * 0.38;
+    canvas.drawCircle(
+      hlCenter,
+      hlR,
+      Paint()
+        ..shader = RadialGradient(
+          colors: [
+            Colors.white.withOpacity(0.92),
+            Colors.white.withOpacity(0.0),
+          ],
+        ).createShader(Rect.fromCircle(center: hlCenter, radius: hlR)),
+    );
+
+    // Specular micro-point — tiny pure-white hotspot
+    final spCenter = center + Offset(-coreR * 0.36, -coreR * 0.38);
+    final spR = coreR * 0.10;
+    canvas.drawCircle(
+      spCenter,
+      spR,
+      Paint()
+        ..shader = RadialGradient(
+          colors: [
+            Colors.white.withOpacity(1.0),
+            Colors.white.withOpacity(0.0),
+          ],
+        ).createShader(Rect.fromCircle(center: spCenter, radius: spR)),
+    );
   }
 
-  List<_PData> _projectParticles(Offset center, double baseR) {
-    final list = <_PData>[];
-    for (final p in particles) {
-      final angle = p.startAngle + rotation * p.speedFactor;
-      final cosT = cos(p.orbitTilt);
-      final sinT = sin(p.orbitTilt);
-      final ox = cos(angle) * p.orbitRadius;
-      final oy = sin(angle) * p.orbitRadius;
-      final projX = ox;
-      final projY = oy * cosT;
-      final projZ = oy * sinT;
-
-      final depth = (projZ + 1) / 2;
-      list.add(_PData(
-        pos: center + Offset(projX, projY) * baseR,
-        z: projZ,
-        r: p.size * (0.5 + 0.5 * depth),
-        opacity: 0.25 + 0.75 * depth,
-      ));
-    }
-    list.sort((a, b) => a.z.compareTo(b.z));
-    return list;
-  }
-
-  void _drawParticle(Canvas canvas, _PData pd) {
-    final paint = Paint()
-      ..color = color.withOpacity(pd.opacity * (0.6 + pulse * 0.4));
-    canvas.drawCircle(pd.pos, pd.r, paint);
+  void _drawG(Canvas canvas, Offset center, double coreR) {
+    final tp = TextPainter(
+      text: TextSpan(
+        text: 'G',
+        style: TextStyle(
+          color: Colors.white,
+          fontSize: coreR * 1.02,
+          fontWeight: FontWeight.w700,
+          height: 1.0,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    tp.paint(
+      canvas,
+      center + Offset(-tp.width * 0.50, -tp.height * 0.50),
+    );
   }
 
   @override
   bool shouldRepaint(_OrbPainter old) =>
-      old.rotation != rotation ||
-      old.pulse != pulse ||
-      old.wave != wave ||
-      old.burst != burst ||
-      old.color != color;
+      old.rotation    != rotation    ||
+      old.pulse       != pulse       ||
+      old.wave        != wave        ||
+      old.burst       != burst       ||
+      old.accentColor != accentColor ||
+      old.isActive    != isActive;
 }

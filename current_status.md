@@ -1,8 +1,8 @@
 
 # CommuteCoder — Current Status
 
-**Last Updated:** 2026-06-22
-**Version:** V3.5.0 — Image Understanding Phase 1: backend vision analysis injected into task context
+**Last Updated:** 2026-06-23
+**Version:** V3.5.3 — Explicit flutter build/analyze routing: lift build guard for explicit requests, auditor output window 3k→6k
 
 ## What's Working
 
@@ -90,6 +90,7 @@ Remote phone-to-cloud file edits are now proven.
 - None known
 
 ## Recent Changes
+- **V3.5.3**: Explicit build/analyze routing — `gerald_bridge.py`: added `_is_explicit_build_or_analyze_request()` helper (detects "flutter analyze", "flutter build apk", "flutter build", "apk path", "build evidence", "build apk"); `run_claude_code_worker()` now conditionally replaces the static `"Do not build APK"` rule with `"Execute the explicitly requested flutter commands and capture EXACT stdout/stderr/exit code"` + a build-focused summary rule when the request is an explicit build/analyze; auditor `claude_output[:3000]` limit raised to `[:6000]` to handle longer build logs. Server restart required.
 - **V3.5.0**: Image Understanding Phase 1 — `gerald_vision.py`: added `TASK_ANALYSIS_PROMPT` and `analyze_image_for_task(image_bytes, mime_type)` function that uses GPT-4.1 vision to produce a 4-section structured analysis (description, UI/layout/style, visible text, task-relevant summary). `gerald_bridge.py`: added `_IMAGE_URL_RE` regex, `_inject_image_analysis(task_text)` helper, and updated import; in `/start`, `text = _inject_image_analysis(text)` called immediately after text extraction — detects `"Uploaded image available at: /dashboard/uploads/..."` pattern, reads file from disk, runs vision analysis, appends `=== IMAGE ANALYSIS === ... === END IMAGE ANALYSIS ===` block to task text before routing to Claude Code. No changes to command_centre, Flutter app, or dashboard UI. Server restart required.
 - **V3.4.7**: SHA256-based task-local file change tracking — `gerald_request_review.py`: replaced filename-set baseline with SHA256 hash baseline; added `_sha256_file()`, `_compute_dirty_hashes()`, `_get_task_local_changes()`, `_git_diff_file()`; `snapshot_pre_task_files()` now stores `{filepath: sha256}` dict; `_load_task_baseline()` returns that dict; `review_task_result()` uses `_get_task_local_changes()` (hash comparison) instead of set subtraction; `file_diffs` field added to review result with per-file unified diffs. Root cause fixed: files already dirty before a task now correctly appear in `git_changed` when their content changes during the task. Verified: `command_centre/index.html` ACTIVE→READY detected even when pre-dirty. Server restart required.
 - **V3.4.6**: Task-local file change tracking — `gerald_request_review.py`: added `_TASK_BASELINE_FILE`, `snapshot_pre_task_files()`, and `_load_task_baseline()`; `review_task_result()` now computes `git_changed = post_dirty - baseline` instead of full repo `git diff --name-only`. `gerald_session_state.py`: added `user_request` hook in `log_event()` that calls `snapshot_pre_task_files()` before the background worker starts. Root cause fixed: pre-existing uncommitted files no longer trigger false-positive scope violations. Server restart required.
