@@ -1,9 +1,12 @@
+import 'dart:convert';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../providers/app_state.dart';
 import '../services/build_verification_service.dart';
+import '../services/gerald_api.dart';
 import '../theme.dart';
 import '../widgets/conversation_orb.dart';
 import '../widgets/push_to_talk_button.dart';
@@ -784,6 +787,18 @@ class _UtilitySubRow extends StatelessWidget {
           onPressed: () => _pickImage(context, state),
         ),
         _UtilityButton(
+          icon: Icons.compare_outlined,
+          tooltip: 'Visual Copy Mode — compare two images',
+          label: 'Compare',
+          onPressed: () => _showVisualCopySheet(context, state),
+        ),
+        _UtilityButton(
+          icon: Icons.auto_awesome_rounded,
+          tooltip: 'Design Studio — generate visual UI concepts',
+          label: 'Design',
+          onPressed: () => _showDesignStudioSheet(context, state),
+        ),
+        _UtilityButton(
           icon: Icons.delete_sweep_outlined,
           tooltip: 'Clear conversation',
           label: 'Clear',
@@ -966,34 +981,43 @@ class _EmptyState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Center(
-      child: SingleChildScrollView(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const ConversationOrb(state: OrbState.idle, size: 160),
-              const SizedBox(height: 28),
-              const Text(
-                'YOUR AI COMMAND BRAIN',
-                style: TextStyle(
-                  color: kAccentBlue,
-                  fontSize: 11,
-                  letterSpacing: 4.0,
-                  fontWeight: FontWeight.w500,
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final orbSize = (constraints.maxWidth * 0.48).clamp(120.0, 180.0);
+        return Center(
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                ConversationOrb(state: OrbState.idle, size: orbSize),
+                const SizedBox(height: 20),
+                const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 24),
+                  child: Text(
+                    'YOUR AI COMMAND BRAIN',
+                    style: TextStyle(
+                      color: kAccentBlue,
+                      fontSize: 11,
+                      letterSpacing: 4.0,
+                      fontWeight: FontWeight.w500,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
                 ),
-              ),
-              const SizedBox(height: 12),
-              Text(
-                'Speak or type to begin',
-                style: TextStyle(color: kTextSecondary, fontSize: 13),
-                textAlign: TextAlign.center,
-              ),
-            ],
+                const SizedBox(height: 12),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 24),
+                  child: Text(
+                    'Speak or type to begin',
+                    style: TextStyle(color: kTextSecondary, fontSize: 13),
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+              ],
+            ),
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 }
@@ -1086,4 +1110,958 @@ void _confirmClear(BuildContext context, AppState state) {
       ],
     ),
   );
+}
+
+// ── Design Studio ─────────────────────────────────────────────────────────────
+
+void _showDesignStudioSheet(BuildContext context, AppState state) {
+  showModalBottomSheet(
+    context: context,
+    isScrollControlled: true,
+    backgroundColor: Colors.transparent,
+    builder: (_) => _DesignStudioSheet(state: state),
+  );
+}
+
+class _DesignStudioSheet extends StatefulWidget {
+  final AppState state;
+  const _DesignStudioSheet({required this.state});
+
+  @override
+  State<_DesignStudioSheet> createState() => _DesignStudioSheetState();
+}
+
+class _DesignStudioSheetState extends State<_DesignStudioSheet> {
+  final _descController = TextEditingController();
+  int _conceptCount = 3;
+  bool _loading = false;
+  String? _error;
+  List<Map<String, dynamic>> _concepts = [];
+  final Map<int, TextEditingController> _iterControllers = {};
+  final Map<int, bool> _iterLoading = {};
+
+  @override
+  void dispose() {
+    _descController.dispose();
+    for (final c in _iterControllers.values) c.dispose();
+    super.dispose();
+  }
+
+  Future<void> _generate() async {
+    final desc = _descController.text.trim();
+    if (desc.isEmpty) return;
+    setState(() {
+      _loading = true;
+      _error = null;
+      _concepts = [];
+    });
+    try {
+      final api = GeraldApi(widget.state.baseUrl);
+      final concepts =
+          await api.generateDesignConcepts(desc, count: _conceptCount);
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _concepts = concepts;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _error = 'Generation failed: $e';
+      });
+    }
+  }
+
+  Future<void> _iterate(int index) async {
+    final ctrl = _iterControllers[index];
+    if (ctrl == null) return;
+    final notes = ctrl.text.trim();
+    if (notes.isEmpty) return;
+    final originalDesc =
+        _concepts[index]['description'] as String? ?? _descController.text;
+
+    setState(() => _iterLoading[index] = true);
+    try {
+      final api = GeraldApi(widget.state.baseUrl);
+      final concepts =
+          await api.iterateDesignConcept(originalDesc, notes, count: 1);
+      if (!mounted) return;
+      if (concepts.isNotEmpty) {
+        setState(() {
+          _concepts[index] = concepts.first;
+          _iterLoading[index] = false;
+          ctrl.clear();
+        });
+      } else {
+        setState(() => _iterLoading[index] = false);
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _iterLoading[index] = false);
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('Iteration failed: $e')));
+    }
+  }
+
+  void _approve(int index) {
+    final concept = _concepts[index];
+    final b64 = concept['image_b64'] as String? ?? '';
+    if (b64.isEmpty) return;
+    try {
+      final bytes = base64Decode(b64);
+      final desc =
+          concept['description'] as String? ?? 'Design concept';
+      widget.state.addImageMessage(
+        'design_concept_${concept['id']}.png',
+        bytes,
+        'image/png',
+        caption: 'Approved design concept: $desc',
+      );
+      if (context.mounted) Navigator.pop(context);
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('Approve failed: $e')));
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return DraggableScrollableSheet(
+      initialChildSize: 0.9,
+      minChildSize: 0.5,
+      maxChildSize: 0.95,
+      expand: false,
+      builder: (_, ctrl) => Container(
+        decoration: BoxDecoration(
+          color: kSurfaceColor,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+          border: Border.all(color: kBorderColor),
+        ),
+        child: Column(
+          children: [
+            // Drag handle
+            Padding(
+              padding: const EdgeInsets.only(top: 12, bottom: 4),
+              child: Container(
+                width: 36,
+                height: 4,
+                decoration: BoxDecoration(
+                    color: kBorderColor,
+                    borderRadius: BorderRadius.circular(2)),
+              ),
+            ),
+            // Header
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 8, 20, 0),
+              child: Row(children: [
+                const Icon(Icons.auto_awesome_rounded,
+                    color: kAccentBlue, size: 18),
+                const SizedBox(width: 10),
+                const Text('DESIGN STUDIO',
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 1.5,
+                      color: kTextPrimary,
+                    )),
+              ]),
+            ),
+            const Padding(
+              padding: EdgeInsets.fromLTRB(20, 4, 20, 12),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  'Describe a screen — Gerald generates visual UI concepts',
+                  style: TextStyle(fontSize: 11, color: kTextSecondary),
+                ),
+              ),
+            ),
+            // Description input
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Container(
+                decoration: BoxDecoration(
+                  color: kSurface2,
+                  borderRadius: BorderRadius.circular(12),
+                  border:
+                      Border.all(color: kAccentBlue.withOpacity(0.5), width: 1.5),
+                ),
+                child: TextField(
+                  controller: _descController,
+                  maxLines: 3,
+                  style:
+                      const TextStyle(fontSize: 13, color: kTextPrimary, height: 1.4),
+                  decoration: InputDecoration(
+                    hintText:
+                        'e.g. A dark home dashboard with project cards, animated orb, and task input at the bottom',
+                    hintStyle: TextStyle(
+                        color: kTextSecondary.withOpacity(0.6), fontSize: 12),
+                    border: InputBorder.none,
+                    contentPadding: const EdgeInsets.all(12),
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            // Concept count selector
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Row(
+                children: [
+                  Text('Concepts:',
+                      style: TextStyle(
+                          fontSize: 11,
+                          color: kTextSecondary,
+                          letterSpacing: 0.5)),
+                  const SizedBox(width: 10),
+                  for (final n in [1, 2, 3])
+                    GestureDetector(
+                      onTap: () => setState(() => _conceptCount = n),
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 150),
+                        width: 36,
+                        height: 28,
+                        margin: const EdgeInsets.only(right: 6),
+                        decoration: BoxDecoration(
+                          color: _conceptCount == n
+                              ? kAccentBlue.withOpacity(0.2)
+                              : kSurface2,
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(
+                            color: _conceptCount == n
+                                ? kAccentBlue
+                                : kBorderColor,
+                            width: _conceptCount == n ? 1.5 : 1,
+                          ),
+                        ),
+                        child: Center(
+                          child: Text('$n',
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w700,
+                                color: _conceptCount == n
+                                    ? kAccentBlue
+                                    : kTextSecondary,
+                              )),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
+            // Generate button
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  onPressed: _loading ? null : _generate,
+                  icon: _loading
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2, color: Colors.white),
+                        )
+                      : const Icon(Icons.auto_awesome_rounded, size: 18),
+                  label: Text(
+                      _loading ? 'Generating concepts...' : 'GENERATE CONCEPTS'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: kAccentBlue,
+                    foregroundColor: Colors.white,
+                    disabledBackgroundColor: kBorderColor,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    textStyle: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 1.2),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12)),
+                  ),
+                ),
+              ),
+            ),
+            if (_error != null)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+                child: Text(_error!,
+                    style: const TextStyle(
+                        color: kStatusError, fontSize: 12)),
+              ),
+            // Concept cards
+            if (_concepts.isNotEmpty)
+              Expanded(
+                child: ListView.builder(
+                  controller: ctrl,
+                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+                  itemCount: _concepts.length,
+                  itemBuilder: (_, i) => _ConceptCard(
+                    key: ValueKey(_concepts[i]['id']),
+                    concept: _concepts[i],
+                    index: i,
+                    iterController: _iterControllers.putIfAbsent(
+                        i, () => TextEditingController()),
+                    isIterLoading: _iterLoading[i] ?? false,
+                    onIterate: () => _iterate(i),
+                    onApprove: () => _approve(i),
+                  ),
+                ),
+              )
+            else
+              const Expanded(child: SizedBox()),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ConceptCard extends StatefulWidget {
+  final Map<String, dynamic> concept;
+  final int index;
+  final TextEditingController iterController;
+  final bool isIterLoading;
+  final VoidCallback onIterate;
+  final VoidCallback onApprove;
+
+  const _ConceptCard({
+    super.key,
+    required this.concept,
+    required this.index,
+    required this.iterController,
+    required this.isIterLoading,
+    required this.onIterate,
+    required this.onApprove,
+  });
+
+  @override
+  State<_ConceptCard> createState() => _ConceptCardState();
+}
+
+class _ConceptCardState extends State<_ConceptCard> {
+  bool _showIter = false;
+
+  Uint8List? get _imageBytes {
+    final b64 = widget.concept['image_b64'] as String? ?? '';
+    if (b64.isEmpty) return null;
+    try {
+      return base64Decode(b64);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  void _viewFullImage(BuildContext context, Uint8List bytes) {
+    showDialog(
+      context: context,
+      builder: (ctx) => Dialog(
+        backgroundColor: kBgColor,
+        insetPadding: const EdgeInsets.all(16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 8, 8),
+              child: Row(children: [
+                Text(
+                  'CONCEPT ${widget.index + 1}',
+                  style: const TextStyle(
+                      color: kAccentBlue,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 1.5),
+                ),
+                const Spacer(),
+                IconButton(
+                  icon: const Icon(Icons.close_rounded,
+                      color: kTextSecondary, size: 20),
+                  onPressed: () => Navigator.pop(ctx),
+                ),
+              ]),
+            ),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(8),
+              child: Image.memory(bytes, fit: BoxFit.contain),
+            ),
+            const SizedBox(height: 16),
+          ],
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bytes = _imageBytes;
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      decoration: BoxDecoration(
+        color: kSurface2,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: kAccentBlue.withOpacity(0.25)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Card header
+          Padding(
+            padding: const EdgeInsets.fromLTRB(14, 12, 14, 8),
+            child: Text(
+              'CONCEPT ${widget.index + 1}',
+              style: const TextStyle(
+                fontSize: 10,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 1.5,
+                color: kAccentBlue,
+              ),
+            ),
+          ),
+          // Concept image
+          GestureDetector(
+            onTap: bytes != null ? () => _viewFullImage(context, bytes) : null,
+            child: bytes != null
+                ? Image.memory(
+                    bytes,
+                    width: double.infinity,
+                    height: 240,
+                    fit: BoxFit.cover,
+                  )
+                : Container(
+                    height: 240,
+                    color: kBorderColor,
+                    child: const Center(
+                      child: Icon(Icons.broken_image_outlined,
+                          color: kTextSecondary, size: 36),
+                    ),
+                  ),
+          ),
+          // Action row
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
+            child: Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: () => setState(() => _showIter = !_showIter),
+                    icon: const Icon(Icons.refresh_rounded, size: 15),
+                    label: const Text('ITERATE'),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: kTextSecondary,
+                      side: const BorderSide(color: kBorderColor),
+                      padding: const EdgeInsets.symmetric(vertical: 10),
+                      textStyle: const TextStyle(
+                          fontSize: 10,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 1.0),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(9)),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: widget.onApprove,
+                    icon: const Icon(Icons.check_rounded, size: 15),
+                    label: const Text('APPROVE'),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: kAccentGreen,
+                      side: BorderSide(color: kAccentGreen.withOpacity(0.6)),
+                      padding: const EdgeInsets.symmetric(vertical: 10),
+                      textStyle: const TextStyle(
+                          fontSize: 10,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 1.0),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(9)),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          // Iteration panel
+          if (_showIter)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+              child: Column(
+                children: [
+                  Container(
+                    decoration: BoxDecoration(
+                      color: kSurfaceColor,
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: kBorderColor),
+                    ),
+                    child: TextField(
+                      controller: widget.iterController,
+                      maxLines: 2,
+                      style: const TextStyle(
+                          fontSize: 12, color: kTextPrimary, height: 1.4),
+                      decoration: InputDecoration(
+                        hintText:
+                            'Describe changes: e.g. make it lighter, add a sidebar…',
+                        hintStyle: TextStyle(
+                            color: kTextSecondary.withOpacity(0.6),
+                            fontSize: 11),
+                        border: InputBorder.none,
+                        contentPadding: const EdgeInsets.all(10),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton(
+                      onPressed:
+                          widget.isIterLoading ? null : widget.onIterate,
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: kAccentBlue,
+                        side: const BorderSide(color: kAccentBlue),
+                        disabledForegroundColor:
+                            kTextMuted,
+                        padding: const EdgeInsets.symmetric(vertical: 10),
+                        textStyle: const TextStyle(
+                            fontSize: 10,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: 1.0),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(9)),
+                      ),
+                      child: widget.isIterLoading
+                          ? const SizedBox(
+                              width: 14,
+                              height: 14,
+                              child: CircularProgressIndicator(
+                                  strokeWidth: 2, color: kAccentBlue),
+                            )
+                          : const Text('REGENERATE WITH CHANGES'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+// ── Visual Copy Mode ──────────────────────────────────────────────────────────
+
+void _showVisualCopySheet(BuildContext context, AppState state) {
+  showModalBottomSheet(
+    context: context,
+    isScrollControlled: true,
+    backgroundColor: Colors.transparent,
+    builder: (_) => _VisualCopySheet(state: state),
+  );
+}
+
+class _VisualCopySheet extends StatefulWidget {
+  final AppState state;
+  const _VisualCopySheet({required this.state});
+
+  @override
+  State<_VisualCopySheet> createState() => _VisualCopySheetState();
+}
+
+class _VisualCopySheetState extends State<_VisualCopySheet> {
+  Uint8List? _targetBytes;
+  String _targetMime = 'image/jpeg';
+  Uint8List? _resultBytes;
+  String _resultMime = 'image/jpeg';
+  bool _loading = false;
+  Map<String, dynamic>? _comparison;
+  String? _error;
+
+  Future<void> _pickSlot({required bool isTarget}) async {
+    final source = await showModalBottomSheet<ImageSource>(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(height: 8),
+            Container(
+              width: 36,
+              height: 4,
+              decoration: BoxDecoration(color: kBorderColor, borderRadius: BorderRadius.circular(2)),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              isTarget ? 'TARGET IMAGE' : 'CURRENT RESULT',
+              style: const TextStyle(fontSize: 10, letterSpacing: 2.5, color: kTextSecondary, fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 8),
+            ListTile(
+              leading: const Icon(Icons.camera_alt_outlined, color: kAccentBlue),
+              title: const Text('Camera'),
+              onTap: () => Navigator.pop(ctx, ImageSource.camera),
+            ),
+            ListTile(
+              leading: const Icon(Icons.photo_library_outlined, color: kAccentBlue),
+              title: const Text('Gallery'),
+              onTap: () => Navigator.pop(ctx, ImageSource.gallery),
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+    if (source == null || !mounted) return;
+    try {
+      final file = await ImagePicker().pickImage(source: source, imageQuality: 85, maxWidth: 1280);
+      if (file == null || !mounted) return;
+      final bytes = await file.readAsBytes();
+      final mime = file.mimeType ?? 'image/jpeg';
+      setState(() {
+        if (isTarget) {
+          _targetBytes = bytes;
+          _targetMime = mime;
+        } else {
+          _resultBytes = bytes;
+          _resultMime = mime;
+        }
+        _comparison = null;
+        _error = null;
+      });
+    } catch (e) {
+      if (mounted) setState(() => _error = 'Image error: $e');
+    }
+  }
+
+  Future<void> _compare() async {
+    setState(() { _loading = true; _error = null; _comparison = null; });
+    try {
+      final api = GeraldApi(widget.state.baseUrl);
+      final result = await api.compareImages(_targetBytes!, _targetMime, _resultBytes!, _resultMime);
+      final comp = result['comparison'];
+      setState(() {
+        _loading = false;
+        if (comp is Map<String, dynamic>) {
+          _comparison = comp;
+        } else {
+          _error = 'Invalid response from server';
+        }
+      });
+    } catch (e) {
+      setState(() { _loading = false; _error = 'Compare failed: $e'; });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return DraggableScrollableSheet(
+      initialChildSize: 0.85,
+      minChildSize: 0.5,
+      maxChildSize: 0.95,
+      expand: false,
+      builder: (_, ctrl) => Container(
+        decoration: BoxDecoration(
+          color: kSurfaceColor,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+          border: Border.all(color: kBorderColor),
+        ),
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.only(top: 12, bottom: 4),
+              child: Container(
+                width: 36,
+                height: 4,
+                decoration: BoxDecoration(color: kBorderColor, borderRadius: BorderRadius.circular(2)),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 8, 20, 0),
+              child: Row(
+                children: [
+                  const Icon(Icons.compare_outlined, color: kAccentBlue, size: 18),
+                  const SizedBox(width: 10),
+                  const Text(
+                    'VISUAL COPY MODE',
+                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.w800, letterSpacing: 1.5, color: kTextPrimary),
+                  ),
+                ],
+              ),
+            ),
+            const Padding(
+              padding: EdgeInsets.fromLTRB(20, 4, 20, 12),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  'Upload a target design and your current result to get visual fix recommendations',
+                  style: TextStyle(fontSize: 11, color: kTextSecondary),
+                ),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Row(
+                children: [
+                  Expanded(child: _ImageSlot(
+                    label: 'TARGET',
+                    sublabel: 'Reference design',
+                    bytes: _targetBytes,
+                    onTap: () => _pickSlot(isTarget: true),
+                  )),
+                  const SizedBox(width: 10),
+                  Expanded(child: _ImageSlot(
+                    label: 'CURRENT RESULT',
+                    sublabel: 'Your screenshot',
+                    bytes: _resultBytes,
+                    onTap: () => _pickSlot(isTarget: false),
+                  )),
+                ],
+              ),
+            ),
+            const SizedBox(height: 14),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  onPressed: (_targetBytes != null && _resultBytes != null && !_loading) ? _compare : null,
+                  icon: _loading
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                        )
+                      : const Icon(Icons.compare_arrows_rounded, size: 18),
+                  label: Text(_loading ? 'Comparing…' : 'COMPARE IMAGES'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: kAccentBlue,
+                    foregroundColor: Colors.white,
+                    disabledBackgroundColor: kBorderColor,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, letterSpacing: 1.2),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                ),
+              ),
+            ),
+            if (_error != null)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+                child: Text(_error!, style: const TextStyle(color: kStatusError, fontSize: 12)),
+              ),
+            if (_comparison != null)
+              Expanded(
+                child: SingleChildScrollView(
+                  controller: ctrl,
+                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+                  child: _ComparisonResults(comparison: _comparison!),
+                ),
+              )
+            else
+              const Expanded(child: SizedBox()),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ImageSlot extends StatelessWidget {
+  final String label;
+  final String sublabel;
+  final Uint8List? bytes;
+  final VoidCallback onTap;
+
+  const _ImageSlot({
+    required this.label,
+    required this.sublabel,
+    required this.bytes,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final hasImage = bytes != null;
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        height: 140,
+        decoration: BoxDecoration(
+          color: kSurface2,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: hasImage ? kAccentBlue.withOpacity(0.7) : kBorderColor,
+            width: hasImage ? 1.5 : 1,
+          ),
+        ),
+        child: hasImage
+            ? ClipRRect(
+                borderRadius: BorderRadius.circular(11),
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    Image.memory(bytes!, fit: BoxFit.cover),
+                    Positioned(
+                      bottom: 0, left: 0, right: 0,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(vertical: 5),
+                        color: Colors.black54,
+                        child: Text(
+                          label,
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(fontSize: 9, fontWeight: FontWeight.w700, letterSpacing: 1.5, color: Colors.white),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              )
+            : Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.add_photo_alternate_outlined, size: 28, color: kAccentBlue.withOpacity(0.6)),
+                  const SizedBox(height: 8),
+                  Text(label, style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w700, letterSpacing: 1.2, color: kTextPrimary)),
+                  const SizedBox(height: 4),
+                  Text(sublabel, style: const TextStyle(fontSize: 9, color: kTextSecondary), textAlign: TextAlign.center),
+                ],
+              ),
+      ),
+    );
+  }
+}
+
+class _ComparisonResults extends StatelessWidget {
+  final Map<String, dynamic> comparison;
+  const _ComparisonResults({required this.comparison});
+
+  @override
+  Widget build(BuildContext context) {
+    final score = (comparison['similarity_score'] as num?)?.toInt() ?? 0;
+    final summary = comparison['summary'] as String? ?? '';
+    final fixes = (comparison['top_5_fixes'] as List?)?.cast<String>() ?? [];
+
+    final diffs = <({String label, String value})>[];
+    void addDiff(String label, String key) {
+      final v = comparison[key] as String? ?? '';
+      if (v.isNotEmpty && v.toLowerCase() != 'none' && v.toLowerCase() != 'n/a') {
+        diffs.add((label: label, value: v));
+      }
+    }
+    addDiff('Layout', 'layout_differences');
+    addDiff('Size & Proportion', 'size_proportion_differences');
+    addDiff('Colours', 'colour_differences');
+    addDiff('Typography', 'typography_differences');
+    addDiff('Missing / Extra', 'missing_extra_elements');
+
+    final scoreColor = score >= 75 ? kAccentGreen : score >= 50 ? kAccentBlue : kStatusError;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: kSurface2,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: scoreColor.withOpacity(0.4)),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 56,
+                height: 56,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: scoreColor.withOpacity(0.12),
+                  border: Border.all(color: scoreColor, width: 2),
+                ),
+                child: Center(
+                  child: Text(
+                    '$score',
+                    style: TextStyle(fontSize: 20, fontWeight: FontWeight.w900, color: scoreColor),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'SIMILARITY: $score / 100',
+                      style: TextStyle(fontSize: 10, fontWeight: FontWeight.w800, letterSpacing: 1.2, color: scoreColor),
+                    ),
+                    if (summary.isNotEmpty) ...[
+                      const SizedBox(height: 6),
+                      Text(summary, style: const TextStyle(fontSize: 12, color: kTextSecondary, height: 1.4)),
+                    ],
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+        if (diffs.isNotEmpty) ...[
+          const SizedBox(height: 14),
+          const Text('DIFFERENCES', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w800, letterSpacing: 1.5, color: kTextSecondary)),
+          const SizedBox(height: 8),
+          for (final d in diffs)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: kSurface2,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: kBorderColor),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(d.label, style: const TextStyle(fontSize: 9, fontWeight: FontWeight.w700, letterSpacing: 1.2, color: kAccentBlue)),
+                    const SizedBox(height: 4),
+                    Text(d.value, style: const TextStyle(fontSize: 12, color: kTextPrimary, height: 1.4)),
+                  ],
+                ),
+              ),
+            ),
+        ],
+        if (fixes.isNotEmpty) ...[
+          const SizedBox(height: 14),
+          const Text('TOP 5 FIXES', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w800, letterSpacing: 1.5, color: kTextSecondary)),
+          const SizedBox(height: 8),
+          for (final entry in fixes.asMap().entries)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Container(
+                    width: 22,
+                    height: 22,
+                    margin: const EdgeInsets.only(top: 1, right: 10),
+                    decoration: BoxDecoration(
+                      color: kAccentBlue.withOpacity(0.15),
+                      borderRadius: BorderRadius.circular(6),
+                      border: Border.all(color: kAccentBlue.withOpacity(0.4)),
+                    ),
+                    child: Center(
+                      child: Text(
+                        '${entry.key + 1}',
+                        style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w800, color: kAccentBlue),
+                      ),
+                    ),
+                  ),
+                  Expanded(
+                    child: Text(entry.value, style: const TextStyle(fontSize: 13, color: kTextPrimary, height: 1.4)),
+                  ),
+                ],
+              ),
+            ),
+        ],
+      ],
+    );
+  }
 }

@@ -303,4 +303,119 @@ class GeraldApi {
     }
     throw Exception('Vision error: ${response.statusCode}');
   }
+
+  // ── Design Studio ────────────────────────────────────────────────────────────
+
+  /// Derive the Design Studio service URL (port 8002) from the main baseUrl.
+  static String designStudioUrl(String baseUrl) {
+    try {
+      final uri = Uri.parse(baseUrl);
+      if (uri.hasPort) {
+        return uri.replace(port: 8002).toString();
+      }
+      return '${uri.scheme}://${uri.host}:8002';
+    } catch (_) {
+      return 'http://localhost:8002';
+    }
+  }
+
+  /// Generate 1–3 visual UI concept images for [description].
+  /// Calls POST /design/generate on the Design Studio service (port 8002).
+  Future<List<Map<String, dynamic>>> generateDesignConcepts(
+    String description, {
+    int count = 3,
+  }) async {
+    final dsUrl = designStudioUrl(baseUrl);
+    final response = await http
+        .post(
+          Uri.parse('$dsUrl/design/generate'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({'description': description, 'count': count}),
+        )
+        .timeout(const Duration(seconds: 120));
+
+    if (response.statusCode >= 200 && response.statusCode < 300) {
+      final decoded = jsonDecode(response.body);
+      final concepts = decoded['concepts'];
+      if (concepts is List) {
+        return concepts.whereType<Map<String, dynamic>>().toList();
+      }
+      return [];
+    }
+    throw Exception('Design generate error: ${response.statusCode}');
+  }
+
+  /// Iterate on a concept with refinement notes.
+  /// Calls POST /design/iterate on the Design Studio service (port 8002).
+  Future<List<Map<String, dynamic>>> iterateDesignConcept(
+    String originalDescription,
+    String iterationNotes, {
+    int count = 1,
+  }) async {
+    final dsUrl = designStudioUrl(baseUrl);
+    final response = await http
+        .post(
+          Uri.parse('$dsUrl/design/iterate'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({
+            'original_description': originalDescription,
+            'iteration_notes': iterationNotes,
+            'count': count,
+          }),
+        )
+        .timeout(const Duration(seconds: 120));
+
+    if (response.statusCode >= 200 && response.statusCode < 300) {
+      final decoded = jsonDecode(response.body);
+      final concepts = decoded['concepts'];
+      if (concepts is List) {
+        return concepts.whereType<Map<String, dynamic>>().toList();
+      }
+      return [];
+    }
+    throw Exception('Design iterate error: ${response.statusCode}');
+  }
+
+  // ── Visual Copy Mode ─────────────────────────────────────────────────────────
+
+  /// POST /compare-images — compare a target reference image against a current
+  /// result screenshot. Returns {"ok": true, "comparison": {...}, ...}.
+  Future<Map<String, dynamic>> compareImages(
+    Uint8List targetBytes,
+    String targetMime,
+    Uint8List resultBytes,
+    String resultMime,
+  ) async {
+    MediaType toMt(String mime) {
+      final p = mime.split('/');
+      return MediaType(p.isNotEmpty ? p[0] : 'image', p.length > 1 ? p[1] : 'jpeg');
+    }
+
+    String toExt(String mime) {
+      final p = mime.split('/');
+      return p.length > 1 ? p[1] : 'jpg';
+    }
+
+    final request = http.MultipartRequest('POST', Uri.parse('$baseUrl/compare-images'))
+      ..files.add(http.MultipartFile.fromBytes(
+        'target', targetBytes,
+        filename: 'target.${toExt(targetMime)}',
+        contentType: toMt(targetMime),
+      ))
+      ..files.add(http.MultipartFile.fromBytes(
+        'result', resultBytes,
+        filename: 'result.${toExt(resultMime)}',
+        contentType: toMt(resultMime),
+      ));
+
+    final streamed = await request.send().timeout(const Duration(seconds: 120));
+    final response = await http.Response.fromStream(streamed);
+
+    if (response.statusCode >= 200 && response.statusCode < 300) {
+      final decoded = jsonDecode(response.body);
+      if (decoded is Map<String, dynamic>) return decoded;
+      return {'message': decoded.toString()};
+    }
+    throw Exception('Compare error ${response.statusCode}');
+  }
 }
