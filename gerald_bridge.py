@@ -26,7 +26,7 @@ import build_verifier
 import multi_ai_router
 from gerald_brain import inject_brain_context
 from gerald_openai_brain import ask_gerald, decide_supervisor_action, generate_risk_review
-from gerald_vision import review_image, analyze_image_for_task
+from gerald_vision import review_image, analyze_image_for_task, compare_images
 from gerald_request_review import review_task_result
 import gerald_issue_memory
 import gerald_session_state as _gss
@@ -34,6 +34,7 @@ from verification_layer import VerificationLayer
 
 BASE = "/opt/Gerald"
 ACTIVE_TASK = os.path.join(BASE, "active_task.json")
+VISUAL_COMPARISON_FILE = os.path.join(BASE, "gerald_visual_comparison.json")
 
 app = FastAPI()
 
@@ -141,6 +142,55 @@ def _inject_image_analysis(task_text: str) -> str:
     except Exception as exc:
         print(f"[image-analysis] Analysis failed ({exc}), continuing without analysis")
         return task_text
+
+
+_FIX_UI_KEYWORDS = (
+    "fix the ui",
+    "fix ui",
+    "apply fixes",
+    "apply the fixes",
+    "visual copy",
+    "fix the visual",
+    "apply visual",
+)
+
+
+def _load_latest_comparison() -> dict | None:
+    """Return the most recently stored visual comparison result, or None."""
+    if not os.path.exists(VISUAL_COMPARISON_FILE):
+        return None
+    try:
+        with open(VISUAL_COMPARISON_FILE, "r", encoding="utf-8") as fh:
+            return json.load(fh)
+    except Exception:
+        return None
+
+
+def _inject_comparison_context(task_text: str) -> str:
+    """If the task mentions fixing the UI and a comparison result is stored, inject it."""
+    lower = task_text.lower()
+    if not any(kw in lower for kw in _FIX_UI_KEYWORDS):
+        return task_text
+    comparison = _load_latest_comparison()
+    if not comparison:
+        return task_text
+    fixes = comparison.get("top_5_fixes", [])
+    fixes_text = "\n".join(f"  {i+1}. {fix}" for i, fix in enumerate(fixes))
+    block = (
+        f"\n\n=== LATEST VISUAL COMPARISON ===\n"
+        f"Similarity Score: {comparison.get('similarity_score', 'N/A')}/100\n"
+        f"Layout Differences: {comparison.get('layout_differences', 'N/A')}\n"
+        f"Size/Proportion Differences: {comparison.get('size_proportion_differences', 'N/A')}\n"
+        f"Colour Differences: {comparison.get('colour_differences', 'N/A')}\n"
+        f"Typography Differences: {comparison.get('typography_differences', 'N/A')}\n"
+        f"Missing/Extra Elements: {comparison.get('missing_extra_elements', 'N/A')}\n"
+        f"Top 5 Fixes:\n{fixes_text}\n"
+        f"Summary: {comparison.get('summary', 'N/A')}\n"
+        f"Compared At: {comparison.get('compared_at', 'N/A')}\n"
+        f"=== END VISUAL COMPARISON ===\n"
+    )
+    print("[comparison-context] Injected latest visual comparison into task")
+    return task_text + block
 
 
 def _is_status_check_task(text: str) -> bool:
@@ -2540,6 +2590,8 @@ def start(payload: dict, background_tasks: BackgroundTasks):
 
     # ── Image analysis: enrich task text with vision analysis before routing ───
     text = _inject_image_analysis(text)
+    # ── Visual comparison context: inject stored comparison for "fix the UI" ──
+    text = _inject_comparison_context(text)
 
     # ── Voice command: "create project X" ─────────────────────────────────────
     detected_name = detect_create_project_name(text)
@@ -3311,6 +3363,75 @@ async def upload_image_endpoint(image: UploadFile = File(...)):
     image_url = f"/dashboard/uploads/{filename}"
     print(f"[upload-image] Stored {len(data)} bytes → {dest}")
     return {"ok": True, "url": image_url, "filename": filename}
+
+
+# ─── Visual Copy Mode: dual-image comparison ──────────────────────────────────
+
+@app.post("/compare-images")
+async def compare_images_endpoint(
+    target: UploadFile = File(...),
+    result: UploadFile = File(...),
+):
+    """Accept a target/reference image and a current-result screenshot, compare them
+    via vision model, store the structured result in gerald_visual_comparison.json,
+    and return the comparison plus a concise summary."""
+    for upload, label in ((target, "target"), (result, "result")):
+        if not (upload.content_type or "").startswith("image/"):
+            raise HTTPException(status_code=400, detail=f"File '{label}' must be an image")
+
+    uploads_dir = os.path.join(BASE, "dashboard", "uploads")
+    os.makedirs(uploads_dir, exist_ok=True)
+
+    target_data = await target.read()
+    result_data = await result.read()
+
+    target_ext = os.path.splitext(target.filename or "target")[1] or ".jpg"
+    target_fname = f"{uuid.uuid4().hex}{target_ext}"
+    with open(os.path.join(uploads_dir, target_fname), "wb") as fh:
+        fh.write(target_data)
+
+    result_ext = os.path.splitext(result.filename or "result")[1] or ".jpg"
+    result_fname = f"{uuid.uuid4().hex}{result_ext}"
+    with open(os.path.join(uploads_dir, result_fname), "wb") as fh:
+        fh.write(result_data)
+
+    target_mime = target.content_type or "image/jpeg"
+    result_mime = result.content_type or "image/jpeg"
+
+    try:
+        comparison = compare_images(target_data, target_mime, result_data, result_mime)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Vision comparison failed: {exc}")
+
+    stored = {
+        **comparison,
+        "target_url": f"/dashboard/uploads/{target_fname}",
+        "result_url": f"/dashboard/uploads/{result_fname}",
+        "compared_at": datetime.now(timezone.utc).isoformat(),
+    }
+    with open(VISUAL_COMPARISON_FILE, "w", encoding="utf-8") as fh:
+        json.dump(stored, fh, indent=2)
+
+    print(
+        f"[compare-images] Score={comparison.get('similarity_score')} "
+        f"target={target_fname} result={result_fname}"
+    )
+    return {
+        "ok": True,
+        "comparison": comparison,
+        "target_url": f"/dashboard/uploads/{target_fname}",
+        "result_url": f"/dashboard/uploads/{result_fname}",
+        "summary": comparison.get("summary", ""),
+    }
+
+
+@app.get("/compare-images/latest")
+async def get_latest_comparison():
+    """Return the most recently stored visual comparison result."""
+    comparison = _load_latest_comparison()
+    if comparison is None:
+        return {"ok": False, "error": "No comparison stored yet"}
+    return {"ok": True, "comparison": comparison}
 
 
 def _run_apk_build_background(project: str):
