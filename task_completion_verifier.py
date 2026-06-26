@@ -1,0 +1,502 @@
+"""
+task_completion_verifier.py — Gerald OS Task Completion Verifier V1
+
+Part of Gerald OS (see gerald_os.md).
+
+Responsibility: Verify completed work with evidence. Nothing else.
+
+The Task Completion Verifier sits between the Engineering Worker and the
+Deployment Manager. It independently inspects the filesystem to determine
+whether the work assigned by the Engineering Manager actually happened.
+
+Gerald OS role reference (gerald_os.md, Section 3):
+  "Task Completion Verifier — Checks contract fulfillment with evidence
+   (files, tests, builds, endpoints)."
+
+Gerald OS constraint (gerald_os.md, Section 5):
+  "Task Completion Verifier: Check evidence against contract — not write
+   product code."
+
+Gerald OS core principle (gerald_os.md, Section 2):
+  "No worker is trusted because it says 'done'. Every task must be verified
+   by evidence."
+
+This module NEVER:
+  - restarts services  (→ deployment_manager)
+  - builds APKs        (→ deployment_manager)
+  - executes work      (→ engineering_worker)
+  - produces plans     (→ engineering_manager)
+
+It receives an Engineering Plan (from engineering_manager) and optionally
+an Engineering Worker result (from engineering_worker), then independently
+confirms the filesystem evidence matches the contract.
+
+Public API:
+  verify_file_exists(path)                          → dict
+  verify_symbols_exist(file_paths, symbols)         → dict
+  detect_deployment_required(changed_files)         → dict
+  verify_python_syntax(file_paths)                  → dict
+  build_verification_report(contract, changed_files)→ dict
+  verify_worker_result(plan, worker_result)         → dict
+
+All functions return JSON-serialisable dicts. No external Gerald imports.
+"""
+
+from __future__ import annotations
+
+import ast
+import os
+import re
+import subprocess
+import sys
+
+GERALD_ROOT = "/opt/Gerald"
+
+
+def _normalize_path(path: str, repo_root: str = GERALD_ROOT) -> str:
+    p = (path or "").strip().replace("\\", "/")
+    if p.startswith("./"):
+        p = p[2:]
+    root = repo_root.rstrip("/")
+    if p.startswith(root + "/"):
+        p = p[len(root) + 1 :]
+    elif p == root:
+        p = ""
+    return p
+
+
+def _abs_path(path: str, repo_root: str = GERALD_ROOT) -> str:
+    p = _normalize_path(path, repo_root)
+    if os.path.isabs(p):
+        return p
+    return os.path.join(repo_root, p)
+
+
+def verify_file_exists(path: str, repo_root: str = GERALD_ROOT) -> dict:
+    """Check whether a single path exists under the repo."""
+    rel = _normalize_path(path, repo_root)
+    abs_path = _abs_path(rel, repo_root)
+    exists = os.path.isfile(abs_path) or os.path.isdir(abs_path)
+    result = {
+        "ok": exists,
+        "path": rel,
+        "exists": exists,
+        "is_file": os.path.isfile(abs_path),
+        "is_dir": os.path.isdir(abs_path),
+    }
+    if not exists:
+        result["error"] = f"path not found: {rel}"
+    return result
+
+
+def _read_text(path: str, repo_root: str) -> str | None:
+    abs_path = _abs_path(path, repo_root)
+    if not os.path.isfile(abs_path):
+        return None
+    try:
+        with open(abs_path, "r", encoding="utf-8", errors="replace") as handle:
+            return handle.read()
+    except OSError:
+        return None
+
+
+def _extract_python_symbols(path: str, repo_root: str) -> tuple[set[str], set[str], set[str]]:
+    text = _read_text(path, repo_root)
+    if text is None or not path.endswith(".py"):
+        return set(), set(), set()
+
+    functions: set[str] = set()
+    classes: set[str] = set()
+    endpoints: set[str] = set()
+
+    try:
+        tree = ast.parse(text, filename=path)
+    except SyntaxError:
+        return functions, classes, endpoints
+
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            functions.add(node.name)
+        elif isinstance(node, ast.ClassDef):
+            classes.add(node.name)
+
+    patterns = [
+        r'@app\.(?:get|post|put|delete|patch|head|options)\(\s*["\']([^"\']+)["\']',
+        r'@router\.(?:get|post|put|delete|patch|head|options)\(\s*["\']([^"\']+)["\']',
+    ]
+    for pattern in patterns:
+        for match in re.finditer(pattern, text):
+            endpoints.add(match.group(1))
+
+    return functions, classes, endpoints
+
+
+def verify_symbols_exist(
+    file_paths: list[str],
+    symbols: list[str],
+    repo_root: str = GERALD_ROOT,
+) -> dict:
+    """Confirm functions, classes, or endpoints exist in the given files."""
+    missing: list[str] = []
+    found: list[str] = []
+    warnings: list[str] = []
+
+    all_functions: set[str] = set()
+    all_classes: set[str] = set()
+    all_endpoints: set[str] = set()
+    searched_files: list[str] = []
+
+    for raw in file_paths:
+        rel = _normalize_path(raw, repo_root)
+        if not rel:
+            continue
+        abs_path = _abs_path(rel, repo_root)
+        if not os.path.isfile(abs_path):
+            warnings.append(f"symbol search skipped, file missing: {rel}")
+            continue
+        searched_files.append(rel)
+        funcs, classes, endpoints = _extract_python_symbols(rel, repo_root)
+        all_functions.update(funcs)
+        all_classes.update(classes)
+        all_endpoints.update(endpoints)
+
+    for symbol in symbols:
+        name = (symbol or "").strip()
+        if not name:
+            continue
+
+        if name.startswith("/"):
+            if name in all_endpoints:
+                found.append(name)
+            else:
+                missing.append(f"endpoint not found: {name}")
+            continue
+
+        if name.startswith("class:"):
+            class_name = name.split(":", 1)[1].strip()
+            if class_name in all_classes:
+                found.append(name)
+            else:
+                missing.append(f"class not found: {class_name}")
+            continue
+
+        if name.startswith("function:"):
+            func_name = name.split(":", 1)[1].strip()
+            if func_name in all_functions:
+                found.append(name)
+            else:
+                missing.append(f"function not found: {func_name}")
+            continue
+
+        matched = (
+            name in all_functions
+            or name in all_classes
+            or name in all_endpoints
+            or f"/{name.lstrip('/')}" in all_endpoints
+        )
+        if matched:
+            found.append(name)
+        else:
+            missing.append(f"symbol not found: {name}")
+
+    if symbols and not searched_files:
+        warnings.append("no readable files available for symbol verification")
+
+    return {
+        "ok": len(missing) == 0,
+        "missing": missing,
+        "found": found,
+        "warnings": warnings,
+        "searched_files": searched_files,
+    }
+
+
+def _is_backend_py_file(path: str) -> bool:
+    p = _normalize_path(path)
+    if not p.endswith(".py"):
+        return False
+    if p.startswith("gerald_app/"):
+        return False
+    return "/" not in p
+
+
+def detect_deployment_required(changed_files: list[str]) -> dict:
+    """Report deployment actions needed based on changed files. Does not run them."""
+    restart_backend = False
+    restart_design_studio = False
+    build_apk = False
+    dashboard_changed = False
+
+    for raw in changed_files:
+        path = _normalize_path(raw)
+        basename = os.path.basename(path)
+
+        if basename == "gerald_bridge.py" or _is_backend_py_file(path):
+            restart_backend = True
+        if basename == "gerald_design_studio.py":
+            restart_design_studio = True
+        if path.startswith("gerald_app/lib/") or path == "gerald_app/pubspec.yaml":
+            build_apk = True
+        if path == "dashboard" or path.startswith("dashboard/"):
+            dashboard_changed = True
+
+    return {
+        "restart_backend": restart_backend,
+        "restart_design_studio": restart_design_studio,
+        "build_apk": build_apk,
+        "dashboard_changed": dashboard_changed,
+    }
+
+
+def verify_python_syntax(
+    file_paths: list[str],
+    repo_root: str = GERALD_ROOT,
+) -> dict:
+    """Run python3 -m py_compile on Python files and capture failures."""
+    results: dict[str, dict] = {}
+    failures: list[str] = []
+    warnings: list[str] = []
+
+    py_files = sorted(
+        {
+            _normalize_path(p, repo_root)
+            for p in file_paths
+            if _normalize_path(p, repo_root).endswith(".py")
+        }
+    )
+
+    for rel in py_files:
+        abs_path = _abs_path(rel, repo_root)
+        if not os.path.isfile(abs_path):
+            entry = {"ok": False, "error": "file not found"}
+            results[rel] = entry
+            failures.append(f"{rel}: file not found")
+            continue
+
+        try:
+            proc = subprocess.run(
+                [sys.executable, "-m", "py_compile", abs_path],
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            entry = {"ok": False, "error": str(exc)}
+            results[rel] = entry
+            failures.append(f"{rel}: {exc}")
+            continue
+
+        if proc.returncode == 0:
+            results[rel] = {"ok": True}
+        else:
+            detail = (proc.stderr or proc.stdout or "py_compile failed").strip()
+            results[rel] = {"ok": False, "error": detail}
+            failures.append(f"{rel}: {detail}")
+
+    if not py_files:
+        warnings.append("no Python files provided for syntax verification")
+
+    return {
+        "ok": len(failures) == 0,
+        "results": results,
+        "failures": failures,
+        "warnings": warnings,
+    }
+
+
+def _contract_required_files(contract: dict) -> list[str]:
+    explicit = contract.get("required_files") or []
+    if explicit:
+        return [str(p).strip() for p in explicit if str(p).strip()]
+    return [str(p).strip() for p in (contract.get("likely_files") or []) if str(p).strip()]
+
+
+def _contract_required_symbols(contract: dict) -> list[str]:
+    symbols: list[str] = []
+    for name in contract.get("required_functions") or []:
+        text = str(name).strip()
+        if text:
+            symbols.append(f"function:{text}" if not text.startswith("function:") else text)
+    for name in contract.get("required_classes") or []:
+        text = str(name).strip()
+        if text:
+            symbols.append(f"class:{text}" if not text.startswith("class:") else text)
+    for route in contract.get("required_endpoints") or []:
+        text = str(route).strip()
+        if text:
+            symbols.append(text if text.startswith("/") else f"/{text.lstrip('/')}")
+    for name in contract.get("required_symbols") or []:
+        text = str(name).strip()
+        if text:
+            symbols.append(text)
+    return symbols
+
+
+def _symbol_search_files(contract: dict, changed_files: list[str], repo_root: str) -> list[str]:
+    files = list(changed_files) + _contract_required_files(contract)
+    unique: list[str] = []
+    seen: set[str] = set()
+    for raw in files:
+        rel = _normalize_path(raw, repo_root)
+        if rel and rel not in seen:
+            seen.add(rel)
+            unique.append(rel)
+    return unique
+
+
+def _compute_confidence(
+    *,
+    file_checks: int,
+    file_passed: int,
+    symbol_checks: int,
+    symbol_passed: int,
+    syntax_checks: int,
+    syntax_passed: int,
+    missing_count: int,
+) -> int:
+    total = file_checks + symbol_checks + syntax_checks
+    passed = file_passed + symbol_passed + syntax_passed
+
+    if total == 0:
+        return 100 if missing_count == 0 else 0
+
+    score = int(round(100 * passed / total))
+    if missing_count:
+        score = min(score, max(0, 100 - missing_count * 10))
+    return max(0, min(100, score))
+
+
+def build_verification_report(
+    contract: dict,
+    changed_files: list[str],
+    repo_root: str = GERALD_ROOT,
+) -> dict:
+    """
+    Build the full verification report for a task contract and changed files.
+
+    Verification only — reports missing evidence and deployment needs.
+    """
+    contract = contract or {}
+    normalized_changed = [_normalize_path(f, repo_root) for f in changed_files if f]
+
+    missing: list[str] = []
+    warnings: list[str] = []
+
+    required_files = _contract_required_files(contract)
+    file_checks = 0
+    file_passed = 0
+    for rel in required_files:
+        file_checks += 1
+        check = verify_file_exists(rel, repo_root)
+        if check["ok"]:
+            file_passed += 1
+        else:
+            missing.append(check.get("error") or f"path not found: {rel}")
+
+    if not required_files:
+        warnings.append("contract defines no required_files or likely_files to verify")
+
+    required_symbols = _contract_required_symbols(contract)
+    symbol_search_files = _symbol_search_files(contract, normalized_changed, repo_root)
+    symbol_result = verify_symbols_exist(symbol_search_files, required_symbols, repo_root)
+    missing.extend(symbol_result["missing"])
+    warnings.extend(symbol_result["warnings"])
+    symbol_checks = len(required_symbols)
+    symbol_passed = len(required_symbols) - len(symbol_result["missing"])
+
+    syntax_result = verify_python_syntax(normalized_changed, repo_root)
+    missing.extend(syntax_result["failures"])
+    warnings.extend(syntax_result["warnings"])
+    syntax_checks = len(syntax_result["results"])
+    syntax_passed = sum(1 for item in syntax_result["results"].values() if item.get("ok"))
+
+    deployment_required = detect_deployment_required(normalized_changed)
+    confidence = _compute_confidence(
+        file_checks=file_checks,
+        file_passed=file_passed,
+        symbol_checks=symbol_checks,
+        symbol_passed=symbol_passed,
+        syntax_checks=syntax_checks,
+        syntax_passed=syntax_passed,
+        missing_count=len(missing),
+    )
+
+    return {
+        "verified": len(missing) == 0,
+        "missing": missing,
+        "warnings": warnings,
+        "deployment_required": deployment_required,
+        "syntax": syntax_result["results"],
+        "confidence": confidence,
+    }
+
+
+def verify_worker_result(
+    plan: dict,
+    worker_result: dict,
+    repo_root: str = GERALD_ROOT,
+) -> dict:
+    """
+    Verify an Engineering Worker's result against the Engineering Plan.
+
+    This is the primary integration point between engineering_worker and the
+    verifier. It accepts exactly what engineering_worker.execute_engineering_plan()
+    returns and the plan that engineering_manager.produce_engineering_plan()
+    produced, then runs all verification checks independently.
+
+    Gerald OS principle: the worker is NEVER trusted because it returned
+    success. This function ignores worker_result["status"] entirely and
+    verifies from filesystem evidence only.
+
+    Args:
+        plan:          dict from engineering_manager.produce_engineering_plan().
+                       Used to determine required files, symbols, and
+                       deployment expectations.
+        worker_result: dict from engineering_worker.execute_engineering_plan().
+                       Used only for metadata (adapter, prompt summary).
+                       The "status" field is ignored — evidence decides.
+        repo_root:     Filesystem root for all path checks.
+
+    Returns:
+        {
+            "verified":            bool,
+            "missing":             list[str],
+            "warnings":            list[str],
+            "deployment_required": {
+                "restart_backend":       bool,
+                "restart_design_studio": bool,
+                "build_apk":             bool,
+                "dashboard_changed":     bool,
+            },
+            "syntax":              dict[str, dict],   # per-file compile results
+            "confidence":          int,               # 0–100
+            "worker_adapter":      str,               # from worker_result
+            "worker_status":       str,               # from worker_result (not trusted)
+            "trust_override":      str,               # always "verified_by_evidence"
+        }
+    """
+    # Build a contract dict from the plan fields the verifier understands
+    contract = {
+        "likely_files":        plan.get("likely_files") or [],
+        "required_files":      plan.get("required_files") or [],
+        "required_functions":  plan.get("required_functions") or [],
+        "required_classes":    plan.get("required_classes") or [],
+        "required_endpoints":  plan.get("required_endpoints") or [],
+        "required_symbols":    plan.get("required_symbols") or [],
+    }
+
+    # Derive changed_files from the plan's likely_files if not carried
+    # in the worker result (V1 worker does not execute, so no real diff yet)
+    changed_files = (
+        worker_result.get("changed_files")
+        or plan.get("likely_files")
+        or []
+    )
+
+    report = build_verification_report(contract, changed_files, repo_root)
+
+    report["worker_adapter"] = str(worker_result.get("adapter", "unknown"))
+    report["worker_status"] = str(worker_result.get("status", "unknown"))
+    report["trust_override"] = "verified_by_evidence"
+
+    return report

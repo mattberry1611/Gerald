@@ -24,6 +24,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 
 import build_verifier
+import deployment_manager
 import multi_ai_router
 from gerald_brain import inject_brain_context
 from gerald_openai_brain import ask_gerald, decide_supervisor_action, generate_risk_review
@@ -370,6 +371,30 @@ def _get_last_real_task_result(project_name: str) -> dict:
 
     return {}
 
+
+def _looks_like_non_user_output(text: str) -> bool:
+    """Return True if text is audit evidence, investigation output, HTML, command output, or git diff."""
+    if not text:
+        return False
+    _markers = [
+        "Evidence-Based Answer",
+        "# Live Investigation Result",
+        "Investigation completed from live evidence",
+        "diff --git",
+        "--- a/",
+        "+++ b/",
+        "<!DOCTYPE",
+        "<html",
+        "AUDIT VERDICT",
+        "audit_verdict",
+        "=== EVIDENCE ===",
+        "CONTRACT AUDIT",
+        "VERIFICATION EVIDENCE",
+    ]
+    _lower = text.lower()
+    return any(m.lower() in _lower for m in _markers)
+
+
 CLAUDE_PS1 = r"C:\Users\Matt\AppData\Roaming\npm\claude.ps1"
 
 BRAIN_FILES = ["project_brain.md", "roadmap.md", "current_status.md", "architecture.md"]
@@ -443,6 +468,57 @@ def _looks_like_implementation_request(text: str) -> bool:
         "files changed",
     ]
     return any(x in lower for x in phrases)
+
+
+_DESIGN_PATTERNS = [
+    "design me",
+    "create a ui for",
+    "generate concepts",
+    "show me 3 app ideas",
+    "design a home screen",
+    "home screen design",
+    "create screen concepts",
+    "create a dashboard",
+    "show me ideas",
+    "send me 3 concepts",
+    "give me 3 concepts",
+    "send me concepts",
+    "give me concepts",
+    "visual concepts",
+    "mockups",
+    "app-store quality",
+    "premium screen",
+]
+
+
+def _is_design_request(text: str) -> bool:
+    lower = (text or "").lower().strip()
+    return any(lower.startswith(p) or p in lower for p in _DESIGN_PATTERNS)
+
+
+_VISION_PATTERNS = [
+    "compare these images",
+    "make it look like this",
+    "analyse this ui",
+    "analyze this ui",
+]
+
+
+def _is_vision_request(text: str) -> bool:
+    lower = (text or "").lower().strip()
+    return any(lower.startswith(p) or p in lower for p in _VISION_PATTERNS)
+
+
+_BUILD_ROUTING_PATTERNS = [
+    "build it",
+    "create apk",
+    "implement concept",
+]
+
+
+def _is_build_routing_request(text: str) -> bool:
+    lower = (text or "").lower().strip()
+    return any(lower.startswith(p) or p in lower for p in _BUILD_ROUTING_PATTERNS)
 
 
 def _is_explicit_build_or_analyze_request(text: str) -> bool:
@@ -837,9 +913,9 @@ def get_worker_directory(task_text: str, project_name: str = "CommuteCoder") -> 
     return "/opt/Gerald/gerald_app"
 
 
-def run_claude_code_worker(task_text: str, project_name: str = "CommuteCoder"):
+def run_claude_code_worker(task_text: str, project_name: str = "CommuteCoder", task_id: str = None):
     """Run approved implementation tasks through real Claude Code CLI."""
-    _task_id = _generate_task_id()
+    _task_id = task_id or _generate_task_id()
     project_outbox = get_project_outbox_file(project_name)
 
     worker_dir = get_worker_directory(task_text, project_name)
@@ -1941,8 +2017,8 @@ def narrow_investigation_prompt(task_text: str) -> str:
         + t
     )
 
-def run_claude_investigation_worker(task_text: str, project_name: str = "CommuteCoder"):
-    _task_id = _generate_task_id()
+def run_claude_investigation_worker(task_text: str, project_name: str = "CommuteCoder", task_id: str = None):
+    _task_id = task_id or _generate_task_id()
     project_outbox = get_project_outbox_file(project_name)
 
     worker_dir = get_worker_directory(task_text, project_name)
@@ -2177,14 +2253,14 @@ def should_use_claude_worker(text: str) -> bool:
     return any(p in lower for p in worker_phrases)
 
 
-def run_gerald_brain(task_text: str, project_name: str = "CommuteCoder"):
+def run_gerald_brain(task_text: str, project_name: str = "CommuteCoder", task_id: str = None):
     print("\n==============================")
     print("🧠 GERALD BRAIN TASK RECEIVED")
     print(f"Project: {project_name}")
     print(task_text)
     print("==============================\n")
 
-    _task_id = _generate_task_id()
+    _task_id = task_id or _generate_task_id()
     outbox_file = get_project_outbox_file(project_name)
     write_task_state(task_text, project_name, "planning", "Gerald Brain is thinking", task_id=_task_id)
     write_status("working", "Gerald Brain thinking")
@@ -2483,8 +2559,8 @@ Return JSON with this schema:
             "message": "",
         }
 
-def run_direct_answer(task_text: str, project_name: str, message: str):
-    _task_id = _generate_task_id()
+def run_direct_answer(task_text: str, project_name: str, message: str, task_id: str = None):
+    _task_id = task_id or _generate_task_id()
     outbox_file = get_project_outbox_file(project_name)
     try:
         # V4 Investigation Evidence Gate
@@ -2565,6 +2641,121 @@ def run_direct_answer(task_text: str, project_name: str, message: str):
         print("❌ RUN_DIRECT_ANSWER ERROR:", err)
 
 
+def run_design_studio_worker(task_text: str, project_name: str, task_id: str = None):
+    """Calls the Design Studio service, saves concept images, writes outbox."""
+    import base64 as _base64
+    _task_id = task_id or _generate_task_id()
+    outbox_file = get_project_outbox_file(project_name)
+    uploads_dir = os.path.join(BASE, "dashboard", "uploads")
+    os.makedirs(uploads_dir, exist_ok=True)
+
+    try:
+        with httpx.Client(timeout=120) as client:
+            resp = client.post(
+                f"{_DESIGN_STUDIO_BASE}/design/generate",
+                json={"description": task_text, "count": 3},
+            )
+            resp.raise_for_status()
+            ds_result = resp.json()
+
+        concepts_raw = ds_result.get("concepts", [])
+        concepts_out = []
+        for c in concepts_raw:
+            b64 = c.get("image_b64", "")
+            if not b64:
+                # Text-only responses do not satisfy design requests — skip
+                continue
+            cid = c.get("id", str(uuid.uuid4())[:8])
+            fname = f"design_concept_{cid}.png"
+            with open(os.path.join(uploads_dir, fname), "wb") as fh:
+                fh.write(_base64.b64decode(b64))
+            concepts_out.append({
+                "id": cid,
+                "url": f"/dashboard/uploads/{fname}",
+                "description": c.get("description", task_text),
+                "name": "",
+                "rationale": "",
+            })
+
+        if not concepts_out:
+            error_msg = "Design Studio failed: no images returned (text-only responses do not satisfy visual concept requests)"
+            data = {
+                "task_id": _task_id,
+                "task": task_text,
+                "project": project_name,
+                "status": "failed",
+                "returncode": 1,
+                "output": error_msg,
+                "summary": error_msg,
+                "error": error_msg,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            }
+            write_outbox(data)
+            write_outbox(data, outbox_file)
+            write_task_state(task_text, project_name, "contract_failed", error_msg,
+                             files_changed=[], output=error_msg, error=error_msg,
+                             contract={}, audit={"verdict": "FAILED", "notes": error_msg},
+                             task_id=_task_id)
+            write_status("error", "Design Studio: no images returned")
+            return
+
+        # Enrich each image concept with a short name and rationale
+        try:
+            from gerald_creative_design_director import generate_ui_concepts
+            minimal_brief = {"brief_summary": task_text, "product_name": project_name}
+            text_concepts = generate_ui_concepts(minimal_brief, count=len(concepts_out))
+            for i, concept in enumerate(concepts_out):
+                if i < len(text_concepts):
+                    concept["name"] = text_concepts[i].get("name", "")
+                    concept["rationale"] = text_concepts[i].get("rationale", "")
+        except Exception as _ne:
+            print(f"[Design Studio] name/rationale enrichment failed: {_ne}")
+
+        n = len(concepts_out)
+        summary = f"Generated {n} visual concept{'s' if n != 1 else ''}"
+        print(f"[Design Studio] worker complete: task_id={_task_id} project={project_name} concepts={n}")
+        data = {
+            "task_id": _task_id,
+            "task": task_text,
+            "project": project_name,
+            "status": "done",
+            "returncode": 0,
+            "output": summary,
+            "summary": summary,
+            "design_concepts": concepts_out,
+            "error": "",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+        write_outbox(data)
+        write_outbox(data, outbox_file)
+        print(f"[Design Studio] outbox written with {n} design_concepts (task_id={_task_id})")
+        _append_task_history(data, project_name)
+        print(f"[Design Studio] task history appended (task_id={_task_id})")
+        write_task_state(task_text, project_name, "completed", summary,
+                         files_changed=[], output=summary, error="",
+                         contract={}, audit={}, task_id=_task_id)
+        write_status("idle", "Design Studio: concepts ready")
+        print(f"[Design Studio] canonical state → completed, status → idle (task_id={_task_id})")
+
+    except Exception as exc:
+        error_msg = f"Design Studio failed: {exc}"
+        print(f"[Design Studio] {error_msg}")
+        data = {
+            "task_id": _task_id,
+            "task": task_text,
+            "project": project_name,
+            "status": "error",
+            "returncode": 1,
+            "output": error_msg,
+            "summary": error_msg,
+            "error": error_msg,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+        write_outbox(data)
+        write_outbox(data, outbox_file)
+        write_status("error", "Design Studio failed")
+
+
 @app.get("/command-centre")
 def command_centre():
     from fastapi.responses import FileResponse
@@ -2588,6 +2779,9 @@ def start(payload: dict, background_tasks: BackgroundTasks):
 
     if not text:
         return {"ok": False, "error": "No task provided", "received_keys": list(payload.keys())}
+
+    # ── Generate a unique task_id for this request immediately ─────────────────
+    _start_task_id = _generate_task_id()
 
     # ── Image analysis: enrich task text with vision analysis before routing ───
     text = _inject_image_analysis(text)
@@ -2620,11 +2814,55 @@ def start(payload: dict, background_tasks: BackgroundTasks):
             "timestamp": datetime.now(timezone.utc).isoformat(),
         })
         write_status("idle", f"Project '{detected_name}' ready")
-        return {"ok": True}
+        return {"ok": True, "task_id": _start_task_id}
 
     raw_project = payload.get("project", "")
     project_name_input = raw_project.strip() if isinstance(raw_project, str) else ""
     project_path, resolved_name = resolve_project(project_name_input)
+
+    # ── Automatic subsystem routing: Design Studio, Vision Analysis, Build System ─
+    def _write_routing_outbox(routing_msg: str):
+        _rdata = {
+            "task_id": _start_task_id,
+            "task": text,
+            "project": resolved_name,
+            "status": "working",
+            "output": routing_msg,
+            "summary": routing_msg,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+        write_outbox(_rdata)
+        write_outbox(_rdata, get_project_outbox_file(resolved_name))
+
+    if _is_design_request(text):
+        print(f"[router] Design request detected → Design Studio (task_id={_start_task_id}, text={text[:80]})")
+        _write_routing_outbox("Gerald selected Design Studio")
+        # Write canonical executing state immediately so /status and /task/truth reflect this
+        # task while the async worker runs — prevents the mobile poll loop from seeing
+        # idle→idle and never triggering _readResult() after completion.
+        write_task_state(
+            text, resolved_name, "executing",
+            "Design Studio is generating concepts",
+            files_changed=[], output="Gerald selected Design Studio",
+            error="", contract={}, audit={}, task_id=_start_task_id,
+        )
+        background_tasks.add_task(run_design_studio_worker, text, resolved_name, _start_task_id)
+        write_status("working", "Design Studio: generating concepts…")
+        return {"ok": True, "task_id": _start_task_id, "message": "Gerald selected Design Studio"}
+
+    if _is_vision_request(text):
+        print(f"[router] Vision request detected → Vision Analysis (text={text[:80]})")
+        _write_routing_outbox("Gerald selected Vision Analysis")
+        background_tasks.add_task(run_claude_code_worker, text, resolved_name, _start_task_id)
+        write_status("working", "Vision Analysis: processing…")
+        return {"ok": True, "task_id": _start_task_id, "message": "Gerald selected Vision Analysis"}
+
+    if _is_build_routing_request(text):
+        print(f"[router] Build request detected → Build System (text={text[:80]})")
+        _write_routing_outbox("Gerald selected Build System")
+        background_tasks.add_task(run_claude_code_worker, text, resolved_name, _start_task_id)
+        write_status("working", "Build System: running…")
+        return {"ok": True, "task_id": _start_task_id, "message": "Gerald selected Build System"}
 
     # ── Session state: log user request and detect failure feedback ───────────
     try:
@@ -2668,10 +2906,9 @@ def start(payload: dict, background_tasks: BackgroundTasks):
     # V4 Investigation Evidence Gate: router-level override.
     # Investigation questions must use live backend evidence, never generic direct answers.
     if _looks_like_investigation_request(text) and not _looks_like_implementation_request(text):
-        _task_id = _generate_task_id()
         reply = _build_live_investigation_answer(text, resolved_name)
         data = {
-            "task_id": _task_id,
+            "task_id": _start_task_id,
             "task": text,
             "project": resolved_name,
             "status": "done",
@@ -2685,10 +2922,11 @@ def start(payload: dict, background_tasks: BackgroundTasks):
         write_outbox(data)
         write_outbox(data, outbox_file)
         _append_task_history(data, resolved_name)
-        write_task_state(text, resolved_name, "completed", "Investigation completed from live evidence", files_changed=[], output=reply, error="", contract={}, audit={}, task_id=_task_id)
+        write_task_state(text, resolved_name, "completed", "Investigation completed from live evidence", files_changed=[], output=reply, error="", contract={}, audit={}, task_id=_start_task_id)
         write_status("idle", "Investigation completed")
         return {
             "ok": True,
+            "task_id": _start_task_id,
             "message": "Investigation Evidence Gate: live evidence investigation completed.",
             "decision": {
                 **decision,
@@ -2699,44 +2937,44 @@ def start(payload: dict, background_tasks: BackgroundTasks):
 
     if decision_action == "status_check":
         truthful_status_response(resolved_name)
-        return {"ok": True, "message": "Decision Agent: status check complete.", "decision": decision}
+        return {"ok": True, "task_id": _start_task_id, "message": "Decision Agent: status check complete.", "decision": decision}
 
     if decision_action == "answer_directly":
-        background_tasks.add_task(run_direct_answer, text, resolved_name, decision_message)
+        background_tasks.add_task(run_direct_answer, text, resolved_name, decision_message, _start_task_id)
         write_status("working", f"Gerald is answering: {resolved_name}")
-        return {"ok": True, "message": "Decision Agent: answering directly.", "decision": decision}
+        return {"ok": True, "task_id": _start_task_id, "message": "Decision Agent: answering directly.", "decision": decision}
 
     if decision_action == "gerald_brain":
-        background_tasks.add_task(run_gerald_brain, decision_task, resolved_name)
+        background_tasks.add_task(run_gerald_brain, decision_task, resolved_name, _start_task_id)
         write_status("working", f"Gerald is thinking: {resolved_name}")
-        return {"ok": True, "message": "Decision Agent: sent to Gerald Brain.", "decision": decision}
+        return {"ok": True, "task_id": _start_task_id, "message": "Decision Agent: sent to Gerald Brain.", "decision": decision}
 
     if decision_action == "execute_pending_approval":
         pending_task = load_pending_approval(resolved_name)
         if pending_task:
             clear_pending_approval()
             claude_task = clean_task_for_claude(pending_task)
-            background_tasks.add_task(run_claude_code_worker, claude_task, resolved_name)
+            background_tasks.add_task(run_claude_code_worker, claude_task, resolved_name, _start_task_id)
             write_status("executing", f"Decision Agent approved pending plan: {resolved_name}")
-            return {"ok": True, "message": "Decision Agent: pending plan sent to Claude Code.", "decision": decision}
-        background_tasks.add_task(run_gerald_brain, "Matt approved, but no pending approval plan exists. Explain this briefly and ask what he wants to proceed with.", resolved_name)
+            return {"ok": True, "task_id": _start_task_id, "message": "Decision Agent: pending plan sent to Claude Code.", "decision": decision}
+        background_tasks.add_task(run_gerald_brain, "Matt approved, but no pending approval plan exists. Explain this briefly and ask what he wants to proceed with.", resolved_name, _start_task_id)
         write_status("working", f"Gerald is resolving missing approval: {resolved_name}")
-        return {"ok": True, "message": "Decision Agent: no pending approval found.", "decision": decision}
+        return {"ok": True, "task_id": _start_task_id, "message": "Decision Agent: no pending approval found.", "decision": decision}
 
     if decision_action == "readonly_investigation":
-        background_tasks.add_task(run_claude_investigation_worker, decision_task, resolved_name)
+        background_tasks.add_task(run_claude_investigation_worker, decision_task, resolved_name, _start_task_id)
         write_status("investigating", f"Decision Agent sent investigation to Claude: {resolved_name}")
-        return {"ok": True, "message": "Decision Agent: read-only investigation started.", "decision": decision}
+        return {"ok": True, "task_id": _start_task_id, "message": "Decision Agent: read-only investigation started.", "decision": decision}
 
     if decision_action == "claude_code":
-        background_tasks.add_task(run_claude_code_worker, decision_task, resolved_name)
+        background_tasks.add_task(run_claude_code_worker, decision_task, resolved_name, _start_task_id)
         write_status("executing", f"Decision Agent sent task to Claude: {resolved_name}")
-        return {"ok": True, "message": "Decision Agent: task sent to Claude Code.", "decision": decision}
+        return {"ok": True, "task_id": _start_task_id, "message": "Decision Agent: task sent to Claude Code.", "decision": decision}
 
     # Fallback keeps the previous router available while Decision Agent V1 settles.
     if is_status_check(text):
         truthful_status_response(resolved_name)
-        return {"ok": True, "message": "Truthful status check complete."}
+        return {"ok": True, "task_id": _start_task_id, "message": "Truthful status check complete."}
 
     current_task = read_task()
     busy_stages = {"executing", "investigating", "working", "planning", "sending", "queued"}
@@ -2746,6 +2984,7 @@ def start(payload: dict, background_tasks: BackgroundTasks):
     if active or stage in busy_stages:
         return {
             "ok": False,
+            "task_id": _start_task_id,
             "message": f"Gerald is already busy ({stage or 'active'}). Please wait for the current task to finish.",
             "task": current_task,
         }
@@ -2754,40 +2993,40 @@ def start(payload: dict, background_tasks: BackgroundTasks):
         pending_task = load_pending_approval(resolved_name)
         if pending_task:
             clear_pending_approval()
-            background_tasks.add_task(run_claude_code_worker, clean_task_for_claude(pending_task), resolved_name)
+            background_tasks.add_task(run_claude_code_worker, clean_task_for_claude(pending_task), resolved_name, _start_task_id)
             write_status("executing", f"Approval received — Claude Code is working on pending plan: {resolved_name}")
-            return {"ok": True, "message": "Approval received. Pending Gerald plan sent to Claude Code."}
+            return {"ok": True, "task_id": _start_task_id, "message": "Approval received. Pending Gerald plan sent to Claude Code."}
 
         previous_task = load_last_outbox_task(resolved_name)
         if previous_task:
-            background_tasks.add_task(run_claude_code_worker, clean_task_for_claude(previous_task), resolved_name)
+            background_tasks.add_task(run_claude_code_worker, clean_task_for_claude(previous_task), resolved_name, _start_task_id)
             write_status("executing", f"Approval received — Claude Code is working on: {resolved_name}")
-            return {"ok": True, "message": "Approval received. Previous Gerald task sent to Claude Code."}
+            return {"ok": True, "task_id": _start_task_id, "message": "Approval received. Previous Gerald task sent to Claude Code."}
         return {"ok": False, "message": "No pending or previous task found to approve."}
 
     if should_use_investigation_worker(text):
-        background_tasks.add_task(run_claude_investigation_worker, text, resolved_name)
+        background_tasks.add_task(run_claude_investigation_worker, text, resolved_name, _start_task_id)
         write_status("investigating", f"Claude Code is investigating: {resolved_name}")
-        return {"ok": True, "message": "Read-only investigation started."}
+        return {"ok": True, "task_id": _start_task_id, "message": "Read-only investigation started."}
 
     if is_planning_only_request(text):
-        background_tasks.add_task(run_gerald_brain, text, resolved_name)
+        background_tasks.add_task(run_gerald_brain, text, resolved_name, _start_task_id)
         write_status("working", f"Gerald is planning: {resolved_name}")
-        return {"ok": True, "message": "Planning request sent to Gerald Brain."}
+        return {"ok": True, "task_id": _start_task_id, "message": "Planning request sent to Gerald Brain."}
 
     if is_general_question(text):
-        background_tasks.add_task(run_gerald_brain, text, resolved_name)
+        background_tasks.add_task(run_gerald_brain, text, resolved_name, _start_task_id)
         write_status("working", f"Gerald is answering: {resolved_name}")
-        return {"ok": True, "message": "Question sent to Gerald Brain."}
+        return {"ok": True, "task_id": _start_task_id, "message": "Question sent to Gerald Brain."}
 
     if should_use_claude_worker(text):
-        background_tasks.add_task(run_claude_code_worker, text, resolved_name)
+        background_tasks.add_task(run_claude_code_worker, text, resolved_name, _start_task_id)
         write_status("executing", f"Claude Code is working on: {resolved_name}")
-        return {"ok": True, "message": "Task sent to Claude Code for implementation."}
+        return {"ok": True, "task_id": _start_task_id, "message": "Task sent to Claude Code for implementation."}
 
-    background_tasks.add_task(run_gerald_brain, text, resolved_name)
+    background_tasks.add_task(run_gerald_brain, text, resolved_name, _start_task_id)
     write_status("working", f"Gerald is thinking about: {resolved_name}")
-    return {"ok": True, "message": "Task sent to Gerald Brain."}
+    return {"ok": True, "task_id": _start_task_id, "message": "Task sent to Gerald Brain."}
 
 
 @app.get("/read")
@@ -3517,6 +3756,11 @@ def build_apk_endpoint(payload: dict = None, background_tasks: BackgroundTasks =
     return {"ok": True, "message": f"APK build started for {project}"}
 
 
+@app.post("/deploy/auto")
+def deploy_auto():
+    """Detect git changes, plan deployment actions, and run them."""
+    return deployment_manager.auto_deploy()
+
 
 # ── Session state endpoints (read-only) ───────────────────────────────────────
 
@@ -3809,9 +4053,75 @@ def get_last_task_result(project: str = "CommuteCoder"):
 
 
 @app.get("/task/result")
-def get_task_result_card(project: str = "CommuteCoder"):
-    """Clean result card for the current task terminal state. Used by mobile result cards."""
+def get_task_result_card(project: str = "CommuteCoder", task_id: str = None):
+    """Clean result card for a specific task_id. Rejects results from unrelated tasks."""
     state = read_task_state()
+
+    # Strict task-id correlation: when task_id is provided, only return results for that task.
+    if task_id:
+        current_state_task_id = state.get("task_id", "")
+        print(f"[/task/result] requested task_id={task_id} | active task_id={current_state_task_id}")
+        if current_state_task_id != task_id:
+            # Not the current active task — search durable history for exact task_id match.
+            # Safety rule: only return data when task_id matches exactly — never bleed
+            # concepts from an unrelated task.
+            _hist_path = _get_task_history_file(project)
+            print(f"[/task/result] searching history at {_hist_path}")
+            if os.path.exists(_hist_path):
+                try:
+                    with open(_hist_path, "r", encoding="utf-8") as _hf:
+                        _history = json.load(_hf)
+                    for _rec in reversed(_history):
+                        if _rec.get("task_id") == task_id:
+                            _rec_status = (_rec.get("status") or "done").lower()
+                            _TERMINAL = {"done", "completed", "failed", "contract_failed", "partial"}
+                            _is_term = _rec_status in _TERMINAL
+                            _out = _rec.get("output") or _rec.get("summary") or ""
+                            _sum = _rec.get("summary") or _out[:200]
+                            _concepts_raw = _rec.get("design_concepts")
+                            print(f"[/task/result] history hit task_id={task_id} status={_rec_status} design_concepts={'yes (' + str(len(_concepts_raw)) + ')' if _concepts_raw else 'none'}")
+                            _card = {
+                                "task_id": task_id,
+                                "is_terminal": _is_term,
+                                "status": "completed" if _rec_status in ("done", "completed") else _rec_status,
+                                "output": _out,
+                                "summary": _sum,
+                                "message": _out,
+                                "files_changed": _rec.get("files_changed") or [],
+                                "failure_reason": _rec.get("error") or None,
+                                "next_action": None,
+                                "task": _rec.get("task", ""),
+                                "project": project,
+                                "timestamp": _rec.get("timestamp", ""),
+                            }
+                            if _concepts_raw:
+                                _card["design_concepts"] = [
+                                    {
+                                        "name": c.get("name", ""),
+                                        "rationale": c.get("rationale", ""),
+                                        "image_url": c.get("url", "") or c.get("image_url", ""),
+                                    }
+                                    for c in _concepts_raw
+                                ]
+                            return _card
+                except Exception as _hist_exc:
+                    print(f"[/task/result] history lookup error: {_hist_exc}")
+            # Task not in history either — still pending/in-progress
+            print(f"[/task/result] task_id={task_id} not found in active state or history → pending")
+            return {
+                "task_id": task_id,
+                "is_terminal": False,
+                "status": "pending",
+                "output": "",
+                "summary": "",
+                "message": "",
+                "files_changed": [],
+                "failure_reason": None,
+                "next_action": None,
+                "task": "",
+                "project": project,
+                "timestamp": "",
+            }
     stage = (state.get("stage") or "idle").lower()
 
     _TERMINAL = {"completed", "done", "failed", "contract_failed", "partial"}
@@ -3831,8 +4141,25 @@ def get_task_result_card(project: str = "CommuteCoder"):
     error = (state.get("error") or "")
     audit_notes = audit.get("notes", "")
 
+    # Detect conversational Gerald Brain responses (no code execution, no contract)
+    _is_brain_response = (
+        detail in ("Gerald Brain finished", "Gerald needs clarification") or
+        (audit_notes and "No contract" in audit_notes and not files_changed)
+    )
+
     if status == "completed":
-        summary = detail or (output[:200] if output else "Task completed successfully.")
+        if _is_brain_response and output:
+            # Extract first meaningful line (skip markdown headers + classification metadata)
+            _sum = ""
+            for _ln in output.split('\n'):
+                _s = _ln.strip()
+                if not _s or _s.startswith('#') or _s.startswith('MESSAGE INTENT'):
+                    continue
+                _sum = _s[:200]
+                break
+            summary = _sum or detail or "Task completed."
+        else:
+            summary = audit_notes or detail or "Task completed successfully."
         failure_reason = None
         next_action = "Test the changes on device."
     elif status == "partial":
@@ -3852,23 +4179,71 @@ def get_task_result_card(project: str = "CommuteCoder"):
         failure_reason = None
         next_action = None
 
-    apk_built = os.path.exists(APK_MANIFEST_FILE) and os.path.exists(APK_SERVE_FILE)
-    apk_download_url = "/apk-latest/download" if apk_built else None
+    # Pull design_concepts + full output text: only from outbox when task_id matches current task.
+    _task_id = state.get("task_id", "")
+    _proj_name = state.get("project", project)
+    design_concepts = None
+    outbox_output = ""
+    try:
+        _ob_path = get_project_outbox_file(_proj_name)
+        if not os.path.exists(_ob_path):
+            _ob_path = OUTBOX_FILE
+        with open(_ob_path, "r", encoding="utf-8") as _obf:
+            _ob = json.load(_obf)
+        outbox_output = _ob.get("output", "") or ""
+        _ob_tid = _ob.get("task_id")
+        _ob_has_concepts = bool(_ob.get("design_concepts"))
+        print(f"[/task/result] active path: state task_id={_task_id} | outbox task_id={_ob_tid} | outbox has design_concepts={_ob_has_concepts}")
+        if _ob_tid == _task_id and _ob_has_concepts:
+            design_concepts = _ob["design_concepts"]
+            print(f"[/task/result] outbox gate passed — {len(design_concepts)} concept(s) attached")
+    except Exception as _ob_exc:
+        print(f"[/task/result] outbox read error: {_ob_exc}")
 
-    return {
-        "task_id": state.get("task_id", ""),
+    # design_concepts is only included when the current task's outbox has matching task_id.
+    # No fallback to history — unrelated tasks must not inherit past design results.
+    is_design_task = design_concepts is not None
+
+    # Full Gerald response text: prefer outbox, fall back to active_task output.
+    # If the candidate looks like audit evidence, investigation output, HTML, command output,
+    # git diff, or contains 'Evidence-Based Answer', fetch the last real task result instead.
+    _candidate_output = outbox_output or output
+    if _looks_like_non_user_output(_candidate_output):
+        _real = _get_last_real_task_result(_proj_name)
+        if _real:
+            _candidate_output = _real.get("output", "") or ""
+    full_output = _candidate_output
+
+    result = {
+        "task_id": _task_id,
         "is_terminal": is_terminal,
         "status": status,
+        "output": full_output,
         "summary": summary,
+        "message": output if _is_brain_response else "",
         "files_changed": files_changed,
-        "apk_built": apk_built,
-        "apk_download_url": apk_download_url,
         "failure_reason": failure_reason,
         "next_action": next_action,
         "task": state.get("task", ""),
-        "project": state.get("project", project),
+        "project": _proj_name,
         "timestamp": state.get("updated", ""),
     }
+
+    if is_design_task:
+        result["design_concepts"] = [
+            {"name": c.get("name", ""), "rationale": c.get("rationale", ""), "image_url": c.get("url", "")}
+            for c in design_concepts
+        ]
+
+    task_l = (result.get("task") or "").lower()
+    output_l = (result.get("output") or "").lower()
+    is_build_task = any(x in task_l or x in output_l for x in ["build apk", "flutter build", "apk built", "apk_download_url", "apk-latest"])
+    if is_build_task:
+        apk_built = os.path.exists(APK_MANIFEST_FILE) and os.path.exists(APK_SERVE_FILE)
+        result["apk_built"] = apk_built
+        result["apk_download_url"] = "/apk-latest/download" if apk_built else None
+
+    return result
 
 
 @app.get("/task/truth")
